@@ -4,6 +4,13 @@ import SwiftUI
 
 enum MenuBarStyle: String, CaseIterable, Identifiable { case columns = "Columns", bars = "Bars"; var id: String { rawValue } }
 enum PercentMode: String, CaseIterable, Identifiable { case never = "Never", high = "High usage", always = "Always"; var id: String { rawValue } }
+/// What the label next to each menu bar meter shows.
+enum LabelKind: String, CaseIterable, Identifiable { case percent = "% used", cost = "Cost", tokens = "Tokens"; var id: String { rawValue } }
+/// Time range for cost / token labels.
+enum LabelPeriod: String, CaseIterable, Identifiable {
+    case today = "Today", week = "7d", month = "30d"
+    var id: String { rawValue }
+}
 enum AppearanceMode: String, CaseIterable, Identifiable { case system = "System", light = "Light", dark = "Dark"; var id: String { rawValue } }
 /// Which limit each menu bar meter shows.
 enum MeterSource: String, CaseIterable, Identifiable { case tightest = "Tightest", session = "Session", weekly = "Weekly"; var id: String { rawValue } }
@@ -25,6 +32,8 @@ final class Prefs: ObservableObject {
     @Published var menuStyle: MenuBarStyle { didSet { d.set(menuStyle.rawValue, forKey: "menuStyle"); changed() } }
     @Published var meterSource: MeterSource { didSet { d.set(meterSource.rawValue, forKey: "meterSource"); changed() } }
     @Published var percentMode: PercentMode { didSet { d.set(percentMode.rawValue, forKey: "percentMode"); changed() } }
+    @Published var labelKind: LabelKind { didSet { d.set(labelKind.rawValue, forKey: "labelKind"); changed() } }
+    @Published var labelPeriod: LabelPeriod { didSet { d.set(labelPeriod.rawValue, forKey: "labelPeriod"); changed() } }
     @Published var spendMode: SpendMode { didSet { d.set(spendMode.rawValue, forKey: "spendMode"); changed() } }
     @Published var showLogos: Bool { didSet { d.set(showLogos, forKey: "showLogos"); changed() } }
     @Published var tokenHistory: Bool { didSet { d.set(tokenHistory, forKey: "tokenHistory"); changed() } }
@@ -50,6 +59,8 @@ final class Prefs: ObservableObject {
         menuStyle = MenuBarStyle(rawValue: d.string(forKey: "menuStyle") ?? "") ?? .columns
         meterSource = MeterSource(rawValue: d.string(forKey: "meterSource") ?? "") ?? .tightest
         percentMode = PercentMode(rawValue: d.string(forKey: "percentMode") ?? "") ?? .high
+        labelKind = LabelKind(rawValue: d.string(forKey: "labelKind") ?? "") ?? .percent
+        labelPeriod = LabelPeriod(rawValue: d.string(forKey: "labelPeriod") ?? "") ?? .today
         spendMode = SpendMode(rawValue: d.string(forKey: "spendMode") ?? "") ?? ((d.object(forKey: "showSpend") as? Bool) == false ? .off : .today)
         showLogos = d.object(forKey: "showLogos") as? Bool ?? true
         tokenHistory = d.object(forKey: "tokenHistory") as? Bool ?? true
@@ -153,11 +164,15 @@ struct SettingsView: View {
                 group("Menu bar") {
                     row { Text("Style"); Spacer(); Segmented(options: MenuBarStyle.allCases, selection: $prefs.menuStyle) { $0.rawValue } }
                     row { Text("Meter shows"); Spacer(); Segmented(options: MeterSource.allCases, selection: $prefs.meterSource) { $0.rawValue } }
-                    row { Text("Percentages"); Spacer(); Segmented(options: PercentMode.allCases, selection: $prefs.percentMode) { $0.rawValue } }
+                    row { Text("Label shows"); Spacer(); Segmented(options: LabelKind.allCases, selection: $prefs.labelKind) { $0.rawValue } }
+                    if prefs.labelKind != .percent {
+                        row { Text("Label range"); Spacer(); Segmented(options: LabelPeriod.allCases, selection: $prefs.labelPeriod) { $0.rawValue } }
+                    }
+                    row { Text("Show label"); Spacer(); Segmented(options: PercentMode.allCases, selection: $prefs.percentMode) { $0.rawValue } }
                     row { Text("Spend"); Spacer(); Segmented(options: SpendMode.allCases, selection: $prefs.spendMode) { $0.rawValue } }
                     row { Text("Logos"); Spacer(); Toggle("", isOn: $prefs.showLogos).toggleStyle(PillToggle()) }
                 }
-                caption("“Tightest” shows whichever limit of that plan is closest to running out.")
+                caption("“Tightest” shows whichever limit of that plan is closest to running out. “High usage” shows labels only once that limit passes 70%.")
 
                 group("Alerts") {
                     row { Text("Notifications"); Spacer(); Toggle("", isOn: $prefs.alertsEnabled).toggleStyle(PillToggle()) }

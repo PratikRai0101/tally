@@ -103,11 +103,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         let entries: [MenuBarRenderer.Entry] = store.visibleServices(prefs).compactMap { s in
             guard s.hasLimits, prefs.inMenuBar(s) else { return nil }
+            let t = store.labelTotals[prefs.labelPeriod]?[s]
             return MenuBarRenderer.Entry(service: s, used: store.meterWindow(s, prefs.meterSource).map { $0.usedPercent / 100 },
+                                         cost: t?.cost ?? 0, tokens: t?.tokens ?? 0,
                                          live: store.live[s] != nil)
         }
         let spend: String? = store.lastUpdated == nil ? "…" : store.spend(prefs.spendMode).map(Fmt.moneyShort)
-        button.image = MenuBarRenderer.image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode,
+        button.image = MenuBarRenderer.image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode, label: prefs.labelKind,
                                              colored: prefs.colorBars, trailing: spend, logos: prefs.showLogos)
         button.toolTip = store.visibleServices(prefs).compactMap { s -> String? in
             guard let w = store.limits[s]?.binding else { return nil }
@@ -118,9 +120,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Draws the whole status item as one image: [icon][meter] per service, then today's spend.
 enum MenuBarRenderer {
-    struct Entry { let service: Service; let used: Double?; var live = false }
+    struct Entry { let service: Service; let used: Double?; var cost: Double = 0; var tokens: Int = 0; var live = false }
 
-    static func image(entries: [Entry], style: MenuBarStyle, percents: PercentMode, colored: Bool, trailing: String?,
+    static func image(entries: [Entry], style: MenuBarStyle, percents: PercentMode, label kind: LabelKind = .percent,
+                      colored: Bool, trailing: String?,
                       logos: Bool = true) -> NSImage {
         let h: CGFloat = 18
         let font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
@@ -129,16 +132,21 @@ enum MenuBarRenderer {
         let meterW: CGFloat = style == .columns ? 6 : 20
         let gap: CGFloat = 3, between: CGFloat = 9
 
-        func pctText(_ used: Double?) -> String? {
-            guard let used else { return nil }
+        /// The label after a meter: % used, cost or tokens; "High usage" shows it only once the limit passes 70%.
+        func labelText(_ e: Entry) -> String? {
             switch percents {
             case .never: return nil
-            case .always: return "\(Int((used * 100).rounded()))%"
-            case .high: return used >= 0.7 ? "\(Int((used * 100).rounded()))%" : nil
+            case .high: guard let u = e.used, u >= 0.7 else { return nil }
+            case .always: break
+            }
+            switch kind {
+            case .percent: return e.used.map { "\(Int(($0 * 100).rounded()))%" }
+            case .cost: return Fmt.moneyShort(e.cost)
+            case .tokens: return Fmt.tokens(e.tokens)
             }
         }
         let pctW: [CGFloat] = entries.map { e in
-            pctText(e.used).map { ($0 as NSString).size(withAttributes: [.font: font]).width + 2 } ?? 0
+            labelText(e).map { ($0 as NSString).size(withAttributes: [.font: font]).width + 2 } ?? 0
         }
         let spendW = trailing.map { ($0 as NSString).size(withAttributes: [.font: spendFont]).width } ?? 0
         var width: CGFloat = 0
@@ -175,9 +183,9 @@ enum MenuBarRenderer {
                 drawMeter(at: x, style: style, width: meterW, height: h, used: used, known: e.used != nil,
                           fill: fillColor, empty: label.withAlphaComponent(0.22))
                 x += meterW
-                if let t = pctText(e.used) {
+                if let t = labelText(e) {
                     (t as NSString).draw(at: NSPoint(x: x + 2, y: (h - font.capHeight) / 2 - 3),
-                                         withAttributes: [.font: font, .foregroundColor: colored ? severity(used) : label])
+                                         withAttributes: [.font: font, .foregroundColor: colored && kind == .percent ? severity(used) : label])
                     x += pctW[i]
                 }
                 if i < entries.count - 1 { x += between }
@@ -305,11 +313,13 @@ enum Snapshot {
             if let mb = env["TALLY_MENUBAR"] {
                 let prefs = Prefs.shared
                 var imgs: [NSImage] = []
-                for style in MenuBarStyle.allCases {
-                    let entries = store.visibleServices(prefs).filter(\.hasLimits).map {
-                        MenuBarRenderer.Entry(service: $0, used: store.limits[$0]?.binding.map { $0.usedPercent / 100 })
+                for (style, kind) in [(MenuBarStyle.columns, LabelKind.percent), (.columns, .cost), (.bars, .tokens)] {
+                    let entries = store.visibleServices(prefs).filter(\.hasLimits).map { s -> MenuBarRenderer.Entry in
+                        let t = store.labelTotals[.today]?[s]
+                        return MenuBarRenderer.Entry(service: s, used: store.limits[s]?.binding.map { $0.usedPercent / 100 },
+                                                     cost: t?.cost ?? 0, tokens: t?.tokens ?? 0)
                     }
-                    imgs.append(MenuBarRenderer.image(entries: entries, style: style, percents: .always, colored: true,
+                    imgs.append(MenuBarRenderer.image(entries: entries, style: style, percents: .always, label: kind, colored: true,
                                                       trailing: Fmt.moneyShort(store.todayCost)))
                 }
                 let w = imgs.map(\.size.width).max() ?? 0

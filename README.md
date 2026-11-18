@@ -20,7 +20,7 @@ Cards are grouped by **subscription**, not by app, so if one tool (say, Pi) spen
 
 ## Features
 
-- **Menu bar meters**: one dithered meter per plan (columns or bars), coloured by usage, plus today's / 7-day / 30-day spend. Pick which limit each meter shows, which plans appear, and whether percentages show.
+- **Menu bar meters**: one dithered meter per plan (columns or bars), coloured by usage, plus today's / 7-day / 30-day spend. Pick which limit each meter shows, which plans appear, and what the label next to each meter says: % used, that plan's cost, or its tokens (today / 7d / 30d), always or only at high usage.
 - **Limits with pace**: every limit shows % used, a reset countdown, and a tick for where an even pace would put you.
 - **Runway forecast**: "Runs out in ~2d 22h at this pace", from your recent burn rate (falls back to the average since the window opened).
 - **Alerts**: notifications at 80% / 95%, when a limit resets, and when you're on pace to run out before the reset.

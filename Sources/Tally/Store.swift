@@ -51,6 +51,8 @@ final class UsageStore: ObservableObject {
     @Published private(set) var weekCost: Double = 0
     @Published private(set) var monthCost: Double = 0
     @Published private(set) var projects: [ProjectSummary] = []
+    /// Per-plan cost and tokens for the menu bar labels, independent of the panel's period.
+    @Published private(set) var labelTotals: [LabelPeriod: [Service: (cost: Double, tokens: Int)]] = [:]
     @Published private(set) var live: [Service: LiveSession] = [:]
     let history = LimitHistory()
     @Published private(set) var isLoading = false
@@ -172,6 +174,17 @@ final class UsageStore: ObservableObject {
         todayCost = records.filter { $0.date >= dayStart }.reduce(0) { $0 + $1.cost }
         weekCost = records.filter { $0.date >= now.addingTimeInterval(-Period.week.seconds) }.reduce(0) { $0 + $1.cost }
         monthCost = records.reduce(0) { $0 + $1.cost }
+        var lt: [LabelPeriod: [Service: (cost: Double, tokens: Int)]] = [:]
+        for (lp, start) in [(LabelPeriod.today, dayStart), (.week, now.addingTimeInterval(-Period.week.seconds)),
+                            (.month, now.addingTimeInterval(-Period.month.seconds))] {
+            var m: [Service: (cost: Double, tokens: Int)] = [:]
+            for r in records where r.date >= start {
+                let cur = m[r.service] ?? (0, 0)
+                m[r.service] = (cur.cost + r.cost, cur.tokens + r.tokens)
+            }
+            lt[lp] = m
+        }
+        labelTotals = lt
 
         // A service is "live" if it logged usage in the last 3 minutes; sum that whole session.
         var lv: [Service: LiveSession] = [:]
