@@ -43,12 +43,38 @@ Everything is read locally. Nothing is sent anywhere except each provider's own 
 
 Tokens are never refreshed or written back, so your CLIs' sessions are left alone. These usage endpoints are undocumented and may change.
 
-## Build
+## Install
+
+Requires macOS 14 (Sonoma) or later, on Apple Silicon or Intel.
+
+**One line in Terminal:**
+
+```sh
+curl -fsSL https://github.com/PratikRai0101/tally/releases/latest/download/Tally.zip -o /tmp/Tally.zip \
+  && ditto -x -k /tmp/Tally.zip /Applications && open /Applications/Tally.app
+```
+
+**Or by hand:** download `Tally.zip` from the [latest release](https://github.com/PratikRai0101/tally/releases/latest), unzip it, and drag **Tally** into Applications.
+
+Tally isn't notarized by Apple, so the first time you open a copy downloaded in a browser, macOS will block it. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/Tally.app`). The Terminal install above doesn't hit this.
+
+Then:
+
+- Look for the meters in your menu bar (Tally has no Dock icon). Click for the panel, right-click for Settings, or press **⌥⌘U**.
+- Allow notifications when asked, if you want limit alerts.
+- Tally shows whichever of Claude Code, Codex, Pi and OpenCode you use and are signed in to; there's nothing to set up. To start it with your Mac, turn on **Settings → Launch at login**.
+- The first scan of your logs takes a few seconds.
+
+To uninstall, quit Tally (right-click → Quit) and delete it from Applications.
+
+## Build from source
 
 Requires macOS 14+ and Xcode / Swift 5.10+.
 
 ```sh
-./build-app.sh        # builds, installs to ~/Applications/Tally.app, and launches it
+git clone https://github.com/PratikRai0101/tally && cd tally
+./build-app.sh             # builds, installs to ~/Applications/Tally.app, and launches it
+./build-app.sh --package   # universal build into dist/Tally.zip (what the release ships)
 ```
 
 Handy for development:
