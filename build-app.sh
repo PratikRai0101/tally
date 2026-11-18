@@ -4,7 +4,7 @@
 #   ./build-app.sh --package  build a universal (Apple Silicon + Intel) app into dist/Tally.zip
 set -e
 cd "$(dirname "$0")"
-VERSION=1.2
+VERSION=1.3
 
 make_bundle() { # $1 = binary, $2 = destination .app
   local APP="$2"

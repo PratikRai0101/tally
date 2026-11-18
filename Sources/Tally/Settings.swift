@@ -35,6 +35,8 @@ final class Prefs: ObservableObject {
     @Published var labelKind: LabelKind { didSet { d.set(labelKind.rawValue, forKey: "labelKind"); changed() } }
     @Published var labelPeriod: LabelPeriod { didSet { d.set(labelPeriod.rawValue, forKey: "labelPeriod"); changed() } }
     @Published var spendMode: SpendMode { didSet { d.set(spendMode.rawValue, forKey: "spendMode"); changed() } }
+    /// Whether the menu bar total is dollars or tokens.
+    @Published var totalMetric: Metric { didSet { d.set(totalMetric.rawValue, forKey: "totalMetric"); changed() } }
     @Published var showLogos: Bool { didSet { d.set(showLogos, forKey: "showLogos"); changed() } }
     @Published var tokenHistory: Bool { didSet { d.set(tokenHistory, forKey: "tokenHistory"); changed() } }
     @Published var modelMap: Bool { didSet { d.set(modelMap, forKey: "modelMap"); changed() } }
@@ -61,6 +63,7 @@ final class Prefs: ObservableObject {
         percentMode = PercentMode(rawValue: d.string(forKey: "percentMode") ?? "") ?? .high
         labelKind = LabelKind(rawValue: d.string(forKey: "labelKind") ?? "") ?? .percent
         labelPeriod = LabelPeriod(rawValue: d.string(forKey: "labelPeriod") ?? "") ?? .today
+        totalMetric = Metric(rawValue: d.string(forKey: "totalMetric") ?? "") ?? .cost
         spendMode = SpendMode(rawValue: d.string(forKey: "spendMode") ?? "") ?? ((d.object(forKey: "showSpend") as? Bool) == false ? .off : .today)
         showLogos = d.object(forKey: "showLogos") as? Bool ?? true
         tokenHistory = d.object(forKey: "tokenHistory") as? Bool ?? true
@@ -169,7 +172,10 @@ struct SettingsView: View {
                         row { Text("Label range"); Spacer(); Segmented(options: LabelPeriod.allCases, selection: $prefs.labelPeriod) { $0.rawValue } }
                     }
                     row { Text("Show label"); Spacer(); Segmented(options: PercentMode.allCases, selection: $prefs.percentMode) { $0.rawValue } }
-                    row { Text("Spend"); Spacer(); Segmented(options: SpendMode.allCases, selection: $prefs.spendMode) { $0.rawValue } }
+                    row { Text("Total"); Spacer(); Segmented(options: SpendMode.allCases, selection: $prefs.spendMode) { $0.rawValue } }
+                    if prefs.spendMode != .off {
+                        row { Text("Total shows"); Spacer(); Segmented(options: Metric.allCases, selection: $prefs.totalMetric) { $0.rawValue } }
+                    }
                     row { Text("Logos"); Spacer(); Toggle("", isOn: $prefs.showLogos).toggleStyle(PillToggle()) }
                 }
                 caption("“Tightest” shows whichever limit of that plan is closest to running out. “High usage” shows labels only once that limit passes 70%.")
@@ -237,7 +243,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Text("Tally v1.2")
+                Text("Tally v1.3")
                     .font(.system(size: 11)).foregroundStyle(Theme.faint)
                     .frame(maxWidth: .infinity).padding(.top, 10)
             }

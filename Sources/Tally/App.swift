@@ -108,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          cost: t?.cost ?? 0, tokens: t?.tokens ?? 0,
                                          live: store.live[s] != nil)
         }
-        let spend: String? = store.lastUpdated == nil ? "…" : store.spend(prefs.spendMode).map(Fmt.moneyShort)
+        let spend: String? = store.lastUpdated == nil ? "…" : store.total(prefs.spendMode, prefs.totalMetric)
         button.image = MenuBarRenderer.image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode, label: prefs.labelKind,
                                              colored: prefs.colorBars, trailing: spend, logos: prefs.showLogos)
         button.toolTip = store.visibleServices(prefs).compactMap { s -> String? in

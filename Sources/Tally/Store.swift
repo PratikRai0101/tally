@@ -199,6 +199,20 @@ final class UsageStore: ObservableObject {
         onChange?()
     }
 
+    /// The menu bar total: dollars or tokens across every plan, for the chosen range.
+    func total(_ mode: SpendMode, _ metric: Metric) -> String? {
+        let lp: LabelPeriod
+        switch mode {
+        case .off: return nil
+        case .today: lp = .today
+        case .week: lp = .week
+        case .month: lp = .month
+        }
+        let all = labelTotals[lp]?.values ?? [:].values
+        return metric == .cost ? Fmt.moneyShort(all.reduce(0) { $0 + $1.cost })
+                               : Fmt.tokens(all.reduce(0) { $0 + $1.tokens }) + " tok"
+    }
+
     func spend(_ mode: SpendMode) -> Double? {
         switch mode {
         case .off: return nil
