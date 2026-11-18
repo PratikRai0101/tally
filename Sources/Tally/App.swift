@@ -289,6 +289,12 @@ enum Snapshot {
     static func run(to path: String) {
         _ = NSApplication.shared
         let env = ProcessInfo.processInfo.environment
+        if env["TALLY_ICON"] != nil {
+            let r = ImageRenderer(content: AppIconView(size: 1024))
+            r.scale = 1
+            write(r.nsImage, to: path)
+            return
+        }
         if env["TALLY_SETTINGS"] != nil {
             NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
                 let r = ImageRenderer(content: SettingsView(scrolls: false).environment(\.colorScheme, .dark))

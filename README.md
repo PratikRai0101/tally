@@ -1,14 +1,98 @@
-# Tally
+<div align="center">
+  <img src="docs/icon.png" width="128" alt="Tally app icon" />
 
-A small macOS menu bar app that shows what your AI coding subscriptions are doing: how much of each plan's limit you've used, when it resets, how fast you're burning through it, and what your usage would have cost at API prices. Drawn in an ordered-dither style.
+  <h1>Tally</h1>
 
-![Menu bar](docs/menubar.png)
+  <p><strong>Every AI subscription, at a glance.</strong></p>
+  <p>
+    A native macOS menu bar app for Claude, Codex, and OpenCode.<br />
+    See how much of each plan's limit is left, when it resets, how fast you're burning it, and what it would have cost at API prices.
+  </p>
 
-<img src="docs/panel.png" width="440" alt="Tally panel">
+  <p>
+    <a href="#install">Install</a> ·
+    <a href="https://github.com/PratikRai0101/tally/releases/latest">Download</a> ·
+    <a href="https://github.com/PratikRai0101/tally/issues">Issues</a> ·
+    <a href="#contributing">Contribute</a>
+  </p>
 
-## What it tracks
+  <p>
+    <a href="#requirements"><img src="https://img.shields.io/badge/macOS-14%2B-19191B?logo=apple&amp;logoColor=white" alt="macOS 14 or later" /></a>
+    <a href="#architecture"><img src="https://img.shields.io/badge/Swift-5.10-E2774F?logo=swift&amp;logoColor=white" alt="Swift 5.10" /></a>
+    <a href="https://github.com/PratikRai0101/tally/releases/latest"><img src="https://img.shields.io/github/v/release/PratikRai0101/tally?color=42C08D" alt="Latest release" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3A3160.svg" alt="MIT License" /></a>
+    <a href="https://github.com/PratikRai0101/tally/stargazers"><img src="https://img.shields.io/github/stars/PratikRai0101/tally?style=flat&amp;color=E6AA5A" alt="GitHub stars" /></a>
+  </p>
+</div>
 
-| Subscription | Limits (live) | Spend & tokens (from local logs) |
+> [!NOTE]
+> **Tally isn't notarized by Apple yet.** The [Terminal install](#install) works straight away; if you download the zip in a browser, macOS asks you to approve it once in System Settings.
+
+## Why Tally?
+
+If you code with several AI agents, your limits live in several places: Claude's usage page, ChatGPT's settings, the OpenCode console. None of them tell you which plan has room left *right now*, whether you'll hit the wall before the reset, or whether a $20 plan is earning its keep.
+
+Tally reads the session logs your agents already write and the usage endpoints your CLIs already sign in to, and puts all of it in one place: a few dithered meters in the menu bar, and a panel that explains them. No accounts, no server, nothing to configure.
+
+## See Tally in action
+
+<p align="center">
+  <img src="docs/menubar.png" width="640" alt="Tally menu bar meters showing percent used, cost and token labels" />
+  <br />
+  <sub><strong>One meter per plan</strong>: label each with % used, cost, or tokens, and end with today's total.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/panel.png" alt="Tally panel with per-plan spend charts, limits, runway forecasts and plan value" /></td>
+    <td width="50%"><img src="docs/models.png" alt="Tally spend by model treemap with a labelled legend" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Know where every limit stands</strong><br /><sub>Reset countdowns, pace, runway forecasts, and plan value</sub></td>
+    <td align="center"><strong>See where the money went</strong><br /><sub>Spend by model, with which plan paid for it</sub></td>
+  </tr>
+</table>
+
+<p align="center"><sub>Actual Tally interface with real usage.</sub></p>
+
+## What it does
+
+### Watch every limit from the menu bar
+
+- One dithered meter per plan, as columns or bars, coloured green → amber → red as usage climbs
+- Choose what each meter tracks: the tightest limit, the session, or the weekly window
+- Label meters with **% used**, the plan's **cost**, or its **tokens** for today / 7 days / 30 days, always or only at high usage
+- End with a total in dollars or tokens, or hide it
+- Pick which plans appear in the menu bar separately from the panel
+- A small green dot shows while an agent is running
+- Open the panel from anywhere with **⌥⌘U**
+
+### Know when you'll run out
+
+- Every limit shows % used, a reset countdown, and a tick marking where an even pace would put you
+- **Runway forecasts**: "Runs out in ~2d 22h at this pace", based on the last hour of use, or the window average once there's enough data
+- **Most headroom** points to the plan with the most room right now
+- **Alerts** at 80% and 95%, when a limit resets, and when you're on pace to run out before it resets
+
+### See what you're getting for the money
+
+- Spend and tokens per plan over 24 hours, 7 days, or 30 days, with hover readouts on every chart
+- **Plan value**: what your usage would cost at API prices versus what the plan costs for the same stretch (e.g. *16× value*)
+- **Running now**: a live badge with the current session's spend and the project it's in
+- **Spend by project**: groups usage by the folder your agent worked in, folding worktrees into their repo
+- **Spend by model**: a dithered treemap with a legend naming each model and the plan that paid for it
+- Usage split by tool, so you can see how much came from Codex CLI versus Pi on the same plan
+
+### Make it yours
+
+- Drag to reorder plans; turn each on or off for the panel and the menu bar
+- Light, dark, or system appearance
+- Editable plan prices for the value calculation
+- Launch at login
+
+## Supported plans
+
+| Plan | Live limits | Usage read from |
 | --- | --- | --- |
 | **Claude** (Pro / Max) | Session (5h), weekly, per-model weekly | Claude Code |
 | **Codex** (ChatGPT Plus / Pro) | Session, weekly, reset credits | Codex CLI, Pi (`openai-codex`) |
@@ -16,80 +100,129 @@ A small macOS menu bar app that shows what your AI coding subscriptions are doin
 | **OpenCode Zen** | — (free models) | OpenCode |
 | **OpenAI** | — | Pi (`openai`) |
 
-Cards are grouped by **subscription**, not by app, so if one tool (say, Pi) spends on several plans, each plan gets its share.
-
-## Features
-
-- **Menu bar meters**: one dithered meter per plan (columns or bars), coloured by usage, plus a total for today / 7 days / 30 days in dollars or tokens. Pick which limit each meter shows, which plans appear, and what the label next to each meter says: % used, that plan's cost, or its tokens (today / 7d / 30d), always or only at high usage.
-- **Limits with pace**: every limit shows % used, a reset countdown, and a tick for where an even pace would put you.
-- **Runway forecast**: "Runs out in ~2d 22h at this pace", from your recent burn rate (falls back to the average since the window opened).
-- **Alerts**: notifications at 80% / 95%, when a limit resets, and when you're on pace to run out before the reset.
-- **Value per plan**: API-price usage vs. what the plan costs for the same stretch (e.g. *16× value*). Prices are editable in Settings.
-- **Running now**: a live badge while a session is active, with that session's spend.
-- **Spend by project**: groups usage by the folder your agent worked in (worktrees fold into their repo).
-- **Spend by model**: a dithered treemap with a labelled legend.
-- **Per-plan charts** with hover readouts, 24h / 7d / 30d, cost or tokens.
-- **Global shortcut** ⌥⌘U to open the panel.
-- Light / dark / system appearance, launch at login, drag-to-reorder plans.
-
-## How it gets the data
-
-Everything is read locally. Nothing is sent anywhere except each provider's own usage endpoint, using the login that provider's CLI already saved.
-
-- **Spend & tokens:** session logs in `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, and OpenCode's `~/.local/share/opencode/opencode.db`. Costs are estimated with the [LiteLLM price table](https://github.com/BerriAI/litellm) (uses T3 Code's cached copy if present, otherwise downloads it once).
-- **Claude limits:** the Claude Code OAuth token from the Keychain (`Claude Code-credentials`) → `api.anthropic.com/api/oauth/usage`.
-- **Codex limits:** `~/.codex/auth.json` → `chatgpt.com/backend-api/wham/usage`, falling back to the rate-limit data in Codex's own logs.
-- **OpenCode Go limits:** the Go API key from Pi or OpenCode's `auth.json` (or `OPENCODE_GO_API_KEY`) → `opencode.ai/zen/go/v1/usage`.
-
-Tokens are never refreshed or written back, so your CLIs' sessions are left alone. These usage endpoints are undocumented and may change.
+Cards are grouped by **plan**, not by app. If one tool spends on several plans (Pi often does), each plan gets its own share.
 
 ## Install
 
-Requires macOS 14 (Sonoma) or later, on Apple Silicon or Intel.
+### Requirements
 
-**One line in Terminal:**
+- macOS 14 (Sonoma) or later, on Apple Silicon or Intel
+- At least one of Claude Code, Codex, Pi, or OpenCode, signed in
 
-```sh
+### Terminal
+
+```bash
 curl -fsSL https://github.com/PratikRai0101/tally/releases/latest/download/Tally.zip -o /tmp/Tally.zip \
   && ditto -x -k /tmp/Tally.zip /Applications && open /Applications/Tally.app
 ```
 
-**Or by hand:** download `Tally.zip` from the [latest release](https://github.com/PratikRai0101/tally/releases/latest), unzip it, and drag **Tally** into Applications.
+### Download
 
-Tally isn't notarized by Apple, so the first time you open a copy downloaded in a browser, macOS will block it. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/Tally.app`). The Terminal install above doesn't hit this.
+Get `Tally.zip` from the [latest release](https://github.com/PratikRai0101/tally/releases/latest), unzip it, and drag **Tally** into Applications. The first time you open it, macOS will block it because it isn't notarized: open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
 
-Then:
+To uninstall, right-click the menu bar meters → **Quit Tally**, then delete Tally from Applications.
 
-- Look for the meters in your menu bar (Tally has no Dock icon). Click for the panel, right-click for Settings, or press **⌥⌘U**.
-- Allow notifications when asked, if you want limit alerts.
-- Tally shows whichever of Claude Code, Codex, Pi and OpenCode you use and are signed in to; there's nothing to set up. To start it with your Mac, turn on **Settings → Launch at login**.
-- The first scan of your logs takes a few seconds.
+## Quick start
 
-To uninstall, quit Tally (right-click → Quit) and delete it from Applications.
+1. Open Tally. Its meters appear in the menu bar; there's no Dock icon.
+2. Allow notifications if you want limit alerts.
+3. Click the meters (or press **⌥⌘U**) to open the panel. Switch between 24h, 7d, and 30d, or between cost and tokens.
+4. Right-click the meters → **Settings** to choose what the menu bar shows, set your plan prices, and turn on **Launch at login**.
+
+The first scan of your logs takes a few seconds; after that Tally refreshes every minute and only re-reads files that changed.
+
+## Privacy by design
+
+Tally has no account, analytics, or telemetry, and no server of its own. Everything it shows comes from files already on your Mac, plus each provider's own usage endpoint:
+
+| Data | Where it comes from |
+| --- | --- |
+| Spend and tokens | Session logs in `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, and OpenCode's `~/.local/share/opencode/opencode.db` |
+| Claude limits | The Claude Code login in your Keychain (`Claude Code-credentials`) → `api.anthropic.com/api/oauth/usage` |
+| Codex limits | `~/.codex/auth.json` → `chatgpt.com/backend-api/wham/usage`, falling back to the rate limits in Codex's own logs |
+| OpenCode Go limits | The Go API key from Pi or OpenCode (or `OPENCODE_GO_API_KEY`) → `opencode.ai/zen/go/v1/usage` |
+| Prices | The [LiteLLM price table](https://github.com/BerriAI/litellm): T3 Code's cached copy if present, otherwise downloaded once |
+
+Each credential is sent only to its own provider. Tally never refreshes or rewrites a login, so your CLIs' sessions are left alone. These usage endpoints are undocumented and may change.
 
 ## Build from source
 
-Requires macOS 14+ and Xcode / Swift 5.10+.
+### Requirements
 
-```sh
-git clone https://github.com/PratikRai0101/tally && cd tally
-./build-app.sh             # builds, installs to ~/Applications/Tally.app, and launches it
-./build-app.sh --package   # universal build into dist/Tally.zip (what the release ships)
+- macOS 14 or later
+- Xcode 15.3 or later (Swift 5.10+)
+- Git
+
+```bash
+git clone https://github.com/PratikRai0101/tally.git
+cd tally
+./build-app.sh             # build, install to ~/Applications/Tally.app, and launch
+./build-app.sh --package   # universal (Apple Silicon + Intel) build into dist/Tally.zip
 ```
 
-Handy for development:
+Handy while developing:
 
-```sh
+```bash
 swift build -c release
 .build/release/Tally --dump                 # print totals and limits in the terminal
 .build/release/Tally --snapshot out.png     # render the panel to a PNG
 ```
 
+`--snapshot` also takes `TALLY_PERIOD=24h|7d|30d`, `TALLY_TOKENS=1`, `TALLY_LIGHT=1`, `TALLY_MENUBAR=menubar.png`, `TALLY_SETTINGS=1`, and `TALLY_ICON=1`.
+
+## Architecture
+
+Tally is a Swift package with a SwiftUI panel inside an AppKit status item. It has no third-party dependencies.
+
+```text
+ session logs ──► UsageScanner ──┐
+ (Claude, Codex,   (cached by    │
+  Pi, OpenCode)     mtime/size)  ├──► UsageStore ──► PopoverView (cards, charts, treemap)
+                                 │     totals,    ├─► MenuBarRenderer (status item image)
+ usage endpoints ─► LimitsFetcher┘     forecasts  └─► Notifier (alerts)
+ (Anthropic, ChatGPT, OpenCode)        live state
+```
+
+| File | Responsibility |
+| --- | --- |
+| `Scanners.swift` | Reads each agent's logs into usage records; caches files by modification time and size |
+| `Limits.swift` | Fetches live limits from each provider using the CLIs' saved logins |
+| `Pricing.swift` | Loads the LiteLLM price table and resolves model names to per-token rates |
+| `Store.swift` | Aggregates records by plan, model, project, and time; tracks live sessions |
+| `Insights.swift` | Project naming, runway forecasts, plan value, alerts, and the global shortcut |
+| `Views.swift` · `Dither.swift` | The panel, the Bayer-dithered meters and charts, and the squarified treemap |
+| `App.swift` | Status item, menu bar rendering, and the `--dump` / `--snapshot` tools |
+| `Settings.swift` | Preferences and the Settings window |
+| `Logos.swift` · `AppIcon.swift` | Embedded SVG logos and the dithered app icon |
+
+## Project status
+
+Tally works day to day on the plans above. Next up:
+
+- [ ] Grok Build usage and limits
+- [ ] Signed and notarized builds
+- [ ] Daily and weekly budgets with menu bar warnings
+- [ ] CSV export and a shareable weekly summary
+- [ ] Desktop widget
+
+## Contributing
+
+Issues and focused pull requests are welcome.
+
+1. Check the [open issues](https://github.com/PratikRai0101/tally/issues), or open one first for anything large.
+2. To add a provider, add a parser to `Scanners.swift`, a `Service` case in `Models.swift`, and, if it has limits, a fetcher in `Limits.swift`.
+3. Check UI changes with `--snapshot` in both light and dark appearances.
+4. Keep credentials local: never log them, and only send each one to its own provider.
+
 ## Credits
 
-- Brand logos from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT). The Claude pixel mascot is redrawn from Claude Code. All logos and names are trademarks of their owners; this project isn't affiliated with any of them.
+- Brand logos from [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT). The Claude pixel mascot is redrawn from Claude Code. All logos and names are trademarks of their owners; Tally isn't affiliated with any of them.
 - Pricing data from [LiteLLM](https://github.com/BerriAI/litellm).
 
 ## License
 
-MIT
+Tally is available under the [MIT License](LICENSE).
+
+## Support the project
+
+If Tally is useful to you, [star the repository](https://github.com/PratikRai0101/tally); it helps other people who juggle AI subscriptions find it.
