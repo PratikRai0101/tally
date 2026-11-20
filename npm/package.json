@@ -1,0 +1,17 @@
+{
+  "name": "tally-menubar",
+  "version": "1.3.0",
+  "description": "Install Tally, the macOS menu bar app that shows your AI coding plan limits, resets and spend (Claude, Codex, OpenCode).",
+  "keywords": ["macos", "menubar", "claude", "codex", "opencode", "usage", "limits", "ai"],
+  "homepage": "https://github.com/PratikRai0101/tally",
+  "repository": { "type": "git", "url": "git+https://github.com/PratikRai0101/tally.git", "directory": "npm" },
+  "bugs": "https://github.com/PratikRai0101/tally/issues",
+  "license": "MIT",
+  "bin": { "tally-menubar": "bin/tally.js" },
+  "files": ["bin", "release.json", "LICENSE"],
+  "os": ["darwin"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "pin": "node scripts/pin-release.mjs"
+  }
+}
