@@ -25,6 +25,15 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3A3160.svg" alt="MIT License" /></a>
     <a href="https://github.com/PratikRai0101/tally/stargazers"><img src="https://img.shields.io/github/stars/PratikRai0101/tally?style=flat&amp;color=E6AA5A" alt="GitHub stars" /></a>
   </p>
+
+  <img src="docs/demo.gif" width="720" alt="Tally: dithered meters fill in the menu bar, a reset countdown ticks down, the panel warns a limit will run out before it resets, and plan value shows $149 of Claude used on a $20 plan" />
+
+  <p><sub>Install in one line, no Apple "could not verify" prompt:</sub></p>
+
+```bash
+npx tally-menubar
+```
+
 </div>
 
 > [!NOTE]
