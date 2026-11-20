@@ -93,7 +93,11 @@ Tally reads the session logs your agents already write and the usage endpoints y
 - **Spend by project**: groups usage by the folder your agent worked in, folding worktrees into their repo
 - **Spend by model**: a dithered treemap with a legend naming each model and the plan that paid for it
 - Usage split by tool, so you can see how much came from Codex CLI versus Pi on the same plan
-- **Share card**: one click turns your week (or day, or month) into a dithered 1200×630 image with your spend, plan value and per-plan bars. Copy it, save it, or post it to X. Project names are never included.
+- **Tally Wrapped**: the share button turns your day, week or month into a Wrapped-style deck: six 1080×1920 story slides (your total at API prices, top plans, tokens counted in copies of *War and Peace*, your coding hours and shift, a summary) plus a 1200×630 card for X. Copy one, save them all, or post. Project names are never included.
+
+<p align="center">
+  <img src="docs/wrapped.png" width="760" alt="Tally Wrapped: six dithered story slides showing a week's AI coding total, top plans, tokens, coding hours and a summary" />
+</p>
 
 ### Make it yours
 
@@ -239,7 +243,7 @@ Tally works day to day on the plans above. Next up:
 - [ ] Grok Build usage and limits
 - [ ] Signed and notarized builds
 - [ ] Daily and weekly budgets with menu bar warnings
-- [ ] CSV export and a shareable weekly summary
+- [ ] CSV export
 - [ ] Desktop widget
 
 ## Contributing

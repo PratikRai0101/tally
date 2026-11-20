@@ -38,6 +38,14 @@ struct Totals {
     var sessions: Int = 0
 }
 
+struct Rhythm {
+    var hours = [Double](repeating: 0, count: 24)    // by local hour of day
+    var weekdays = [Double](repeating: 0, count: 7)  // Sunday first
+    var bars: [Double] = []
+    var barLabels: [String] = []
+    var peakBar: Date?
+}
+
 @MainActor
 final class UsageStore: ObservableObject {
     @Published var period: Period = .week { didSet { recompute() } }
@@ -240,6 +248,36 @@ final class UsageStore: ObservableObject {
             guard let b = l.binding, l.error == nil else { return nil }
             return (l.service, b.leftPercent)
         }.max { $0.1 < $1.1 }
+    }
+
+    /// When the period's work happened, for the share deck: by hour of day, by weekday and as a bar series.
+    func rhythm() -> Rhythm {
+        let cal = Calendar.current, now = Date()
+        var r = Rhythm()
+        let weight: (UsageRecord) -> Double = { $0.cost > 0 ? $0.cost : Double($0.tokens) * 1e-7 }
+        let inPeriod = records.filter { $0.date >= now.addingTimeInterval(-period.seconds) }
+        for rec in inPeriod {
+            r.hours[cal.component(.hour, from: rec.date)] += weight(rec)
+            r.weekdays[cal.component(.weekday, from: rec.date) - 1] += weight(rec)
+        }
+        let unit: Calendar.Component = period == .day ? .hour : .day
+        let n = period == .day ? 24 : (period == .week ? 7 : 30)
+        let last = cal.dateInterval(of: unit, for: now)!.start
+        let starts = (0..<n).map { cal.date(byAdding: unit, value: $0 - (n - 1), to: last)! }
+        r.bars = Array(repeating: 0, count: n)
+        for rec in inPeriod {
+            if let i = starts.lastIndex(where: { $0 <= rec.date }) { r.bars[i] += weight(rec) }
+        }
+        let df = DateFormatter()
+        r.barLabels = starts.enumerated().map { i, d in
+            switch period {
+            case .day: let h = cal.component(.hour, from: d); return h % 6 == 0 ? String(format: "%02d", h) : ""
+            case .week: df.dateFormat = "EEE"; return df.string(from: d)
+            case .month: df.dateFormat = "d"; return (n - 1 - i) % 7 == 0 ? df.string(from: d) : ""
+            }
+        }
+        if let i = r.bars.indices.max(by: { r.bars[$0] < r.bars[$1] }), r.bars[i] > 0 { r.peakBar = starts[i] }
+        return r
     }
 
     func value(_ m: ModelSummary) -> Double { metric == .cost ? m.cost : Double(m.tokens) }

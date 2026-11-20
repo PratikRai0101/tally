@@ -327,10 +327,14 @@ enum Snapshot {
         }
         if let p = env["TALLY_PERIOD"], let per = Period(rawValue: p) { store.period = per }
         if env["TALLY_TOKENS"] != nil { store.metric = .tokens }
-        // TALLY_SHARE=1: render the share card instead of the panel.
+        // TALLY_SHARE=1: render the share deck instead of the panel, as out-1.png … out-7.png.
         if env["TALLY_SHARE"] != nil {
-            if let img = ShareCardRenderer.image(ShareStats(store: store)) { write(img, to: path, scale: 2) }
-            print("wrote \(path)")
+            let stats = ShareStats(store: store)
+            let base = (path as NSString).deletingPathExtension
+            for i in 0..<ShareDeck.count {
+                if let img = ShareCardRenderer.image(stats, page: i) { write(img, to: "\(base)-\(i + 1).png", scale: ShareCardRenderer.scale(i)) }
+            }
+            print("wrote \(base)-1…\(ShareDeck.count).png")
             return
         }
         let light = env["TALLY_LIGHT"] != nil
