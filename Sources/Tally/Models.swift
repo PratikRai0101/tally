@@ -128,6 +128,22 @@ struct UsageRecord {
     var tokens: Int { input + cacheRead + cacheWrite + output }
 }
 
+/// A time a plan refused requests because a limit was used up, read from the agents' logs.
+struct Lockout {
+    let date: Date
+    let service: Service
+    var kind: String          // five_hour, seven_day, … or "limit" when the log doesn't say
+    var resetAt: Date?
+}
+
+/// A limit reading below 100% (Codex logs these as you go), for "closest call".
+struct NearMiss {
+    let date: Date
+    let service: Service
+    let kind: String
+    let percent: Double
+}
+
 struct LimitWindow: Identifiable {
     let id = UUID()
     let title: String

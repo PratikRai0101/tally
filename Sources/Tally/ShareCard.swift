@@ -41,6 +41,8 @@ struct ShareStats {
     let rows: [Row]
     let models: [String]
     let rhythm: Rhythm
+    let lockouts: [Lockout]
+    let closest: NearMiss?
     let end = Date()
 
     @MainActor init(store: UsageStore) {
@@ -67,7 +69,13 @@ struct ShareStats {
         for m in store.models { byName[m.displayName, default: 0] += m.cost }
         models = byName.sorted { $0.value > $1.value }.prefix(4).map(\.key)
         rhythm = store.rhythm()
+        let since = Date().addingTimeInterval(-store.period.seconds)
+        lockouts = store.lockouts.filter { $0.date >= since }
+        closest = store.nearMisses.filter { $0.date >= since }.max { $0.percent < $1.percent }
     }
+
+    /// The lockouts slide appears when a plan stopped you, or when you came within 20% of a limit.
+    var showLimits: Bool { !lockouts.isEmpty || (closest?.percent ?? 0) >= 80 }
 
     static func times(_ m: Double) -> String { String(format: m >= 10 ? "%.0f×" : "%.1f×", m) }
     var multipleText: String? { multiple.map(Self.times) }
@@ -318,8 +326,9 @@ private func sticker(_ s: String, _ bg: Color, _ angle: Double) -> some View {
 /// The line that turns every shared card into an invitation.
 private struct InstallPill: View {
     var size: CGFloat
+    var text = "npx tally-menubar wrapped"
     var body: some View {
-        Text("npx tally-menubar wrapped").font(.system(size: size, weight: .medium, design: .monospaced))
+        Text(text).font(.system(size: size, weight: .medium, design: .monospaced))
             .foregroundStyle(W.paper).padding(.horizontal, size * 0.6).padding(.vertical, size * 0.5)
             .background(RoundedRectangle(cornerRadius: size * 0.3).fill(W.ink)).fixedSize()
     }
@@ -338,23 +347,31 @@ private struct Brand: View {
 // MARK: - Slides
 
 enum ShareDeck {
-    static let names = ["intro", "total", "plans", "tokens", "hours", "summary", "post"]
-    static var count: Int { names.count }
+    /// The slides for these numbers, in order; the last is the card for X.
+    static func names(_ st: ShareStats) -> [String] {
+        ["intro", "total", "plans", "tokens", "hours"] + (st.showLimits ? ["limits"] : []) + ["summary", "post"]
+    }
+
+    static func name(_ i: Int, _ st: ShareStats) -> String {
+        let n = names(st)
+        return n[max(0, min(i, n.count - 1))]
+    }
 
     @MainActor @ViewBuilder
     static func page(_ i: Int, _ st: ShareStats) -> some View {
-        switch i {
-        case 0: Intro(st: st)
-        case 1: Total(st: st)
-        case 2: Plans(st: st)
-        case 3: Tokens(st: st)
-        case 4: Hours(st: st)
-        case 5: Summary(st: st)
+        switch name(i, st) {
+        case "intro": Intro(st: st)
+        case "total": Total(st: st)
+        case "plans": Plans(st: st)
+        case "tokens": Tokens(st: st)
+        case "hours": Hours(st: st)
+        case "limits": Limits(st: st)
+        case "summary": Summary(st: st)
         default: Post(st: st)
         }
     }
 
-    static func size(_ i: Int) -> CGSize { i == count - 1 ? W.wide : W.story }
+    static func size(_ i: Int, _ st: ShareStats) -> CGSize { name(i, st) == "post" ? W.wide : W.story }
 }
 
 private struct Intro: View {
@@ -530,6 +547,89 @@ private struct Hours: View {
     }
 }
 
+private struct Limits: View {
+    let st: ShareStats
+    static let red = Color(hex: 0xE5484D), hair = Color(hex: 0xE6E6E3), muted = Color(hex: 0x6B6B68)
+    static let day: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMM d"; return f }()
+    static let full: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE, MMM d · h:mm a"; return f }()
+
+    struct Row { let service: Service; let kind: String; var count: Int; var last: Date; var percent: Double? }
+
+    static func kindName(_ k: String) -> String {
+        switch k {
+        case "five_hour": return "5-hour limit"
+        case "seven_day": return "weekly limit"
+        case "seven_day_opus": return "weekly Opus limit"
+        case "seven_day_sonnet": return "weekly Sonnet limit"
+        case "daily": return "daily limit"
+        case "monthly": return "monthly limit"
+        case "limit": return "usage limit"
+        default: return k.replacingOccurrences(of: "_", with: " ") + " limit"
+        }
+    }
+
+    static func span(_ t: TimeInterval) -> String {
+        let m = Int((t / 60).rounded()), d = m / 1440, h = (m % 1440) / 60, mm = m % 60
+        if d > 0 { return "\(d)\u{00A0}day\(d > 1 ? "s" : "")" + (h > 0 ? " \(h)h" : "") }
+        if h > 0 { return "\(h)h" + (mm > 0 ? "\u{00A0}\(mm)m" : "") }
+        return "\(mm)\u{00A0}min"
+    }
+
+    var rows: [Row] {
+        if st.lockouts.isEmpty, let c = st.closest { return [Row(service: c.service, kind: c.kind, count: 0, last: c.date, percent: c.percent)] }
+        var groups: [String: Row] = [:]
+        for l in st.lockouts {
+            let key = "\(l.service.rawValue)|\(l.kind)"
+            var g = groups[key] ?? Row(service: l.service, kind: l.kind, count: 0, last: l.date)
+            g.count += 1; g.last = max(g.last, l.date)
+            groups[key] = g
+        }
+        return groups.values.sorted { ($0.count, $0.last) > ($1.count, $1.last) }
+    }
+
+    var body: some View {
+        let n = st.lockouts.count, shown = Array(rows.prefix(3))
+        let big = n > 0 ? "\(n)" : "\(Int((st.closest?.percent ?? 0).rounded()))%"
+        let waited = st.lockouts.reduce(0.0) { a, l in a + max(0, (l.resetAt ?? l.date).timeIntervalSince(l.date)) }
+        let label = n > 0 ? (waited > 0 ? "Locked out for up to \(Self.span(waited))." : "Every one mid-task.") : "You never hit the wall. Yet."
+        ZStack(alignment: .topLeading) {
+            W.paper
+            Dots(layer: DotLayer(size: W.story, cell: 5, colors: [Self.red, W.ink, nil]) { p in
+                p.text(0, big, size: 520, x: 60, baseline: 760, maxWidth: 940, top: 0.55)
+            })
+            mono("Your limits").foregroundStyle(Self.muted).at(80, 150)
+            Display(lines: n > 0 ? [n == 1 ? "time you hit" : "times you hit", "the wall."] : ["was your", "closest call."], size: 120)
+                .frame(width: 920, alignment: .leading).at(80, 800)
+            VStack(spacing: 0) {
+                Rectangle().fill(Self.hair).frame(height: 2)
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, r in
+                    HStack {
+                        mono("\(r.service.name) · \(Self.kindName(r.kind))").foregroundStyle(W.ink)
+                        Spacer()
+                        mono(r.percent == nil ? "\(r.count)× · last \(Self.day.string(from: r.last))" : Self.full.string(from: r.last).lowercased(), 24)
+                            .foregroundStyle(Self.muted)
+                    }
+                    .frame(height: 74)
+                    Rectangle().fill(Self.hair).frame(height: 2)
+                }
+            }
+            .frame(width: 920).at(80, 1080)
+            heavy(label, 76).foregroundStyle(W.ink).lineLimit(1).minimumScaleFactor(0.5).frame(maxWidth: 840, alignment: .leading)
+                .padding(EdgeInsets(top: 16, leading: 30, bottom: 22, trailing: 30))
+                .background(n > 0 ? W.orange : W.green).rotationEffect(.degrees(-3)).fixedSize()
+                .at(70, 1080 + CGFloat(shown.count) * 76 + 50)
+            serif("Tally sits in your menu bar and warns you at 80%, or as soon as you’re on pace to run out, so you can wrap up first.", 46)
+                .foregroundStyle(W.ink).frame(width: 920, height: 1920 - 215, alignment: .bottomLeading).at(80, 0)
+            HStack(alignment: .bottom) {
+                Brand(); Spacer()
+                VStack(alignment: .trailing, spacing: 14) { mono("Mac menu bar app", 22).opacity(0.75); InstallPill(size: 26, text: "npx tally-menubar") }
+            }
+            .frame(width: 920).frame(height: 1920 - 80, alignment: .bottom).at(80, 0)
+        }
+        .foregroundStyle(W.ink)
+    }
+}
+
 private struct RankList: View {
     let title: String
     let items: [String]
@@ -640,15 +740,15 @@ private struct Post: View {
 
 enum ShareCardRenderer {
     /// Stories render at 1080×1920 px; the post card at 2× (2400×1260 px).
-    static func scale(_ page: Int) -> CGFloat { page == ShareDeck.count - 1 ? 2 : 1 }
+    static func scale(_ page: Int, _ st: ShareStats) -> CGFloat { ShareDeck.name(page, st) == "post" ? 2 : 1 }
 
     @MainActor static func image(_ stats: ShareStats, page: Int) -> NSImage? {
         var out: NSImage?
-        let sz = ShareDeck.size(page)
+        let sz = ShareDeck.size(page, stats)
         NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
             let r = ImageRenderer(content: ShareDeck.page(page, stats).frame(width: sz.width, height: sz.height).clipped()
                 .environment(\.colorScheme, .dark))
-            r.scale = scale(page)
+            r.scale = scale(page, stats)
             out = r.nsImage
         }
         return out
@@ -695,7 +795,8 @@ struct ShareView: View {
 
     var body: some View {
         let stats = ShareStats(store: store)
-        let sz = ShareDeck.size(page)
+        let count = ShareDeck.names(stats).count, page = min(self.page, count - 1)
+        let sz = ShareDeck.size(page, stats)
         let k = min(stage.width / sz.width, stage.height / sz.height)
         VStack(spacing: 14) {
             ZStack {
@@ -708,22 +809,22 @@ struct ShareView: View {
                     .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
                     .id(page)
                 HStack {
-                    arrow("chevron.left", -1, .leftArrow)
+                    arrow("chevron.left", -1, .leftArrow, count)
                     Spacer()
-                    arrow("chevron.right", 1, .rightArrow)
+                    arrow("chevron.right", 1, .rightArrow, count)
                 }
             }
             .frame(width: stage.width + 80, height: stage.height)
             HStack(spacing: 7) {
-                ForEach(0..<ShareDeck.count, id: \.self) { i in
+                ForEach(0..<count, id: \.self) { i in
                     Capsule().fill(i == page ? Color.white : Color.white.opacity(0.22))
-                        .frame(width: i == ShareDeck.count - 1 ? 18 : 7, height: 7)
-                        .onTapGesture { page = i }
+                        .frame(width: i == count - 1 ? 18 : 7, height: 7)
+                        .onTapGesture { self.page = i }
                 }
             }
             HStack(spacing: 10) {
                 Segmented(options: Period.allCases, selection: $store.period) { $0.rawValue }
-                Text(page == ShareDeck.count - 1 ? "Post · 1200×630" : "Story \(page + 1) of 6 · 1080×1920")
+                Text(page == count - 1 ? "Post · 1200×630" : "Story \(page + 1) of \(count - 1) · 1080×1920")
                     .font(.system(size: 11)).foregroundStyle(Theme.dim)
                 Spacer()
                 Text("No project names are included.").font(.system(size: 11)).foregroundStyle(Theme.faint)
@@ -744,8 +845,8 @@ struct ShareView: View {
         .environment(\.colorScheme, .dark)
     }
 
-    private func arrow(_ symbol: String, _ step: Int, _ key: KeyEquivalent) -> some View {
-        Button { page = (page + step + ShareDeck.count) % ShareDeck.count; status = "" } label: {
+    private func arrow(_ symbol: String, _ step: Int, _ key: KeyEquivalent, _ count: Int) -> some View {
+        Button { page = (min(page, count - 1) + step + count) % count; status = "" } label: {
             Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34)
                 .background(Circle().fill(Color.white.opacity(0.1)))
         }
@@ -753,7 +854,7 @@ struct ShareView: View {
     }
 
     private func copy(_ stats: ShareStats) {
-        guard let img = ShareCardRenderer.image(stats, page: page) else { return }
+        guard let img = ShareCardRenderer.image(stats, page: min(page, ShareDeck.names(stats).count - 1)) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([img])
         status = "Copied"
@@ -764,17 +865,18 @@ struct ShareView: View {
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
         panel.prompt = "Save Here"
         guard panel.runModal() == .OK, let dir = panel.url else { return }
-        for i in 0..<ShareDeck.count {
+        let names = ShareDeck.names(stats)
+        for (i, n) in names.enumerated() {
             guard let img = ShareCardRenderer.image(stats, page: i),
-                  let data = ShareCardRenderer.png(img, scale: ShareCardRenderer.scale(i)) else { continue }
-            let name = i == ShareDeck.count - 1 ? "tally-\(stats.period.rawValue)-post.png" : "tally-\(stats.period.rawValue)-\(i + 1)-\(ShareDeck.names[i]).png"
+                  let data = ShareCardRenderer.png(img, scale: ShareCardRenderer.scale(i, stats)) else { continue }
+            let name = n == "post" ? "tally-\(stats.period.rawValue)-post.png" : "tally-\(stats.period.rawValue)-\(i + 1)-\(n).png"
             try? data.write(to: dir.appendingPathComponent(name))
         }
-        status = "Saved \(ShareDeck.count) images"
+        status = "Saved \(names.count) images"
     }
 
     private func share(_ stats: ShareStats) {
-        guard let img = ShareCardRenderer.image(stats, page: page), let anchor else { return }
+        guard let img = ShareCardRenderer.image(stats, page: min(page, ShareDeck.names(stats).count - 1)), let anchor else { return }
         NSSharingServicePicker(items: [img, stats.postText]).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 

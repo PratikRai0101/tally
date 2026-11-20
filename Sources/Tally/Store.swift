@@ -71,6 +71,9 @@ final class UsageStore: ObservableObject {
     private let pricing = Pricing()
     private lazy var scanner = UsageScanner(pricing: pricing)
     private var records: [UsageRecord] = []
+    /// Plan lockouts and limit readings from the last 30 days of logs, for the Wrapped deck.
+    private(set) var lockouts: [Lockout] = []
+    private(set) var nearMisses: [NearMiss] = []
     private var usedServices = Set<Service>()
     private var lastLimitsFetch: Date = .distantPast
     private var timer: Timer?
@@ -102,6 +105,8 @@ final class UsageStore: ObservableObject {
             let newLimits = fetched
             await MainActor.run {
                 self.records = result.records
+                self.lockouts = result.lockouts
+                self.nearMisses = result.nearMisses
                 self.usedServices = Set(result.records.map(\.service))
                 if let newLimits {
                     self.limits = Dictionary(uniqueKeysWithValues: newLimits.map { ($0.service, $0) })

@@ -331,10 +331,11 @@ enum Snapshot {
         if env["TALLY_SHARE"] != nil {
             let stats = ShareStats(store: store)
             let base = (path as NSString).deletingPathExtension
-            for i in 0..<ShareDeck.count {
-                if let img = ShareCardRenderer.image(stats, page: i) { write(img, to: "\(base)-\(i + 1).png", scale: ShareCardRenderer.scale(i)) }
+            let count = ShareDeck.names(stats).count
+            for i in 0..<count {
+                if let img = ShareCardRenderer.image(stats, page: i) { write(img, to: "\(base)-\(i + 1).png", scale: ShareCardRenderer.scale(i, stats)) }
             }
-            print("wrote \(base)-1…\(ShareDeck.count).png")
+            print("wrote \(base)-1…\(count).png")
             return
         }
         let light = env["TALLY_LIGHT"] != nil
