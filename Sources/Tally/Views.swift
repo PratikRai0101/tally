@@ -15,6 +15,8 @@ struct PopoverView: View {
     @ObservedObject var prefs = Prefs.shared
     @State private var contentHeight: CGFloat = 600
     var fixedHeight = false   // snapshots render everything without a scroll view
+    /// Snapshots for promo material: hide project names (TALLY_PRIVATE=1).
+    static var hidePrivate = false
 
     private var maxHeight: CGFloat { (NSScreen.main?.visibleFrame.height ?? 900) - 60 }
 
@@ -43,7 +45,7 @@ struct PopoverView: View {
                 ServiceCard(service: s, store: store, prefs: prefs)
                 Rectangle().fill(Theme.line).frame(height: 1)
             }
-            if prefs.showProjects && !store.projects.isEmpty {
+            if prefs.showProjects && !store.projects.isEmpty && !Self.hidePrivate {
                 projectsSection.padding(20)
                 Rectangle().fill(Theme.line).frame(height: 1)
             }
@@ -256,7 +258,7 @@ struct ServiceCard: View {
                 HStack(spacing: 6) {
                     LiveDot()
                     Text("Running now").foregroundStyle(Theme.good)
-                    Text("· \(lv.tool.name) in \(lv.project)").foregroundStyle(Theme.dim).lineLimit(1)
+                    Text(PopoverView.hidePrivate ? "· \(lv.tool.name)" : "· \(lv.tool.name) in \(lv.project)").foregroundStyle(Theme.dim).lineLimit(1)
                     Spacer()
                     Text("\(Fmt.money(lv.cost)) this session").font(.system(size: 11.5, design: .monospaced))
                 }

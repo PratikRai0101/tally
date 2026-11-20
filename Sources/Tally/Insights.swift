@@ -155,7 +155,8 @@ final class Notifier {
     }
 
     func evaluate(_ limits: [Service: ServiceLimits], history: LimitHistory, prefs: Prefs) {
-        guard prefs.alertsEnabled else { return }
+        // The bare binary (--dump, --snapshot) has no bundle, and UserNotifications crashes without one.
+        guard prefs.alertsEnabled, Bundle.main.bundleIdentifier != nil else { return }
         for (service, lim) in limits {
             for w in lim.windows {
                 let cycle = Int((w.resetsAt?.timeIntervalSince1970 ?? 0) / 600)

@@ -308,36 +308,56 @@ enum Snapshot {
         while (store.lastUpdated == nil || store.isLoading) && Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         }
+        // TALLY_DEMO_DIR: render every state the promo video needs from one fetch (avoids rate limits).
+        if let dir = env["TALLY_DEMO_DIR"] {
+            PopoverView.hidePrivate = true
+            let sc = CGFloat(Double(env["TALLY_SCALE"] ?? "") ?? 2)  // e.g. 6 for 4K video cuts
+            for (name, per, tok) in [("p7", Period.week, false), ("p24", .day, false), ("p30", .month, false), ("p7t", .week, true)] {
+                store.period = per; store.metric = tok ? .tokens : .cost
+                NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
+                    let r = ImageRenderer(content: PopoverView(store: store, fixedHeight: true).environment(\.colorScheme, .dark))
+                    r.scale = sc
+                    write(r.nsImage, to: "\(dir)/\(name).png", scale: sc)
+                }
+            }
+            store.period = .week; store.metric = .cost
+            menubar(store, light: false, to: "\(dir)/mb.png")
+            print("wrote \(dir)")
+            return
+        }
         if let p = env["TALLY_PERIOD"], let per = Period(rawValue: p) { store.period = per }
         if env["TALLY_TOKENS"] != nil { store.metric = .tokens }
         let light = env["TALLY_LIGHT"] != nil
+        PopoverView.hidePrivate = env["TALLY_PRIVATE"] != nil
         let view = PopoverView(store: store, fixedHeight: true).environment(\.colorScheme, light ? .light : .dark)
         NSAppearance(named: light ? .aqua : .darkAqua)!.performAsCurrentDrawingAppearance {
             let r = ImageRenderer(content: view)
             r.scale = 2
             write(r.nsImage, to: path, scale: 2)
-            if let mb = env["TALLY_MENUBAR"] {
-                let prefs = Prefs.shared
-                var imgs: [NSImage] = []
-                for (style, kind) in [(MenuBarStyle.columns, LabelKind.percent), (.columns, .cost), (.bars, .tokens)] {
-                    let entries = store.visibleServices(prefs).filter(\.hasLimits).map { s -> MenuBarRenderer.Entry in
-                        let t = store.labelTotals[.today]?[s]
-                        return MenuBarRenderer.Entry(service: s, used: store.limits[s]?.binding.map { $0.usedPercent / 100 },
-                                                     cost: t?.cost ?? 0, tokens: t?.tokens ?? 0)
-                    }
-                    imgs.append(MenuBarRenderer.image(entries: entries, style: style, percents: .always, label: kind, colored: true,
-                                                      trailing: Fmt.moneyShort(store.todayCost)))
-                }
-                let w = imgs.map(\.size.width).max() ?? 0
-                let combo = NSImage(size: NSSize(width: w + 16, height: 22 * CGFloat(imgs.count) + 8), flipped: true) { rect in
-                    (light ? NSColor(hex: 0xE8E6E1) : NSColor(hex: 0x2A2A2E)).setFill(); rect.fill()
-                    for (i, im) in imgs.enumerated() { im.draw(in: NSRect(x: 8, y: 6 + CGFloat(i) * 22, width: im.size.width, height: im.size.height)) }
-                    return true
-                }
-                write(combo, to: mb, scale: 4)
-            }
+            if let mb = env["TALLY_MENUBAR"] { menubar(store, light: light, to: mb) }
         }
         print("wrote \(path)")
+    }
+
+    private static func menubar(_ store: UsageStore, light: Bool, to mb: String) {
+        let prefs = Prefs.shared
+        var imgs: [NSImage] = []
+        for (style, kind) in [(MenuBarStyle.columns, LabelKind.percent), (.columns, .cost), (.bars, .tokens)] {
+            let entries = store.visibleServices(prefs).filter(\.hasLimits).map { s -> MenuBarRenderer.Entry in
+                let t = store.labelTotals[.today]?[s]
+                return MenuBarRenderer.Entry(service: s, used: store.limits[s]?.binding.map { $0.usedPercent / 100 },
+                                             cost: t?.cost ?? 0, tokens: t?.tokens ?? 0)
+            }
+            imgs.append(MenuBarRenderer.image(entries: entries, style: style, percents: .always, label: kind, colored: true,
+                                              trailing: Fmt.moneyShort(store.todayCost)))
+        }
+        let w = imgs.map(\.size.width).max() ?? 0
+        let combo = NSImage(size: NSSize(width: w + 16, height: 22 * CGFloat(imgs.count) + 8), flipped: true) { rect in
+            (light ? NSColor(hex: 0xE8E6E1) : NSColor(hex: 0x2A2A2E)).setFill(); rect.fill()
+            for (i, im) in imgs.enumerated() { im.draw(in: NSRect(x: 8, y: 6 + CGFloat(i) * 22, width: im.size.width, height: im.size.height)) }
+            return true
+        }
+        write(combo, to: mb, scale: 4)
     }
 
     private static func write(_ img: NSImage?, to path: String, scale: CGFloat = 1) {
