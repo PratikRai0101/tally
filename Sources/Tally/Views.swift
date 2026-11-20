@@ -67,6 +67,11 @@ struct PopoverView: View {
                 Text(store.metric == .cost ? "spent · \(store.period.label)" : "tokens · \(store.period.label)")
                     .font(.system(size: 13)).foregroundStyle(Theme.dim)
                 Spacer()
+                Button { ShareWindow.shared.show(store: store) } label: {
+                    Image(systemName: "square.and.arrow.up").font(.system(size: 13)).foregroundStyle(Theme.dim)
+                }
+                .buttonStyle(.plain).help("Share a usage card")
+                .padding(.trailing, 8)
                 Button { store.refresh(force: true) } label: {
                     Image(systemName: "arrow.clockwise")
                         .rotationEffect(.degrees(store.isLoading ? 360 : 0))

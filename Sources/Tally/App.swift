@@ -327,6 +327,12 @@ enum Snapshot {
         }
         if let p = env["TALLY_PERIOD"], let per = Period(rawValue: p) { store.period = per }
         if env["TALLY_TOKENS"] != nil { store.metric = .tokens }
+        // TALLY_SHARE=1: render the share card instead of the panel.
+        if env["TALLY_SHARE"] != nil {
+            if let img = ShareCardRenderer.image(ShareStats(store: store)) { write(img, to: path, scale: 2) }
+            print("wrote \(path)")
+            return
+        }
         let light = env["TALLY_LIGHT"] != nil
         PopoverView.hidePrivate = env["TALLY_PRIVATE"] != nil
         let view = PopoverView(store: store, fixedHeight: true).environment(\.colorScheme, light ? .light : .dark)
