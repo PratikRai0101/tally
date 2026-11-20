@@ -120,7 +120,7 @@ Cards are grouped by **plan**, not by app. If one tool spends on several plans (
 
 - macOS 14 (Sonoma) or later, on Apple Silicon or Intel
 - At least one of Claude Code, Codex, Pi, or OpenCode, signed in
-- Node 18 or later, for the npx install
+- Node 18 or later for the npx install, or Homebrew
 
 ### npx (recommended)
 
@@ -137,6 +137,14 @@ This downloads the latest release from GitHub, checks it against the SHA-256 pin
 | `npx tally-menubar uninstall` | Remove Tally (`--purge` also removes its settings) |
 
 The installer's source is in [`npm/`](npm).
+
+### Homebrew
+
+```bash
+brew install --cask pratikrai0101/tally/tally
+```
+
+Update with `brew upgrade --cask tally`. The cask lives in [PratikRai0101/homebrew-tally](https://github.com/PratikRai0101/homebrew-tally); since Tally isn't notarized yet, it clears the quarantine flag after install so there's no Gatekeeper prompt.
 
 ### Terminal, without Node
 
