@@ -1,6 +1,6 @@
 {
   "name": "tally-menubar",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Install Tally, the macOS menu bar app that shows your AI coding plan limits, resets and spend (Claude, Codex, OpenCode).",
   "keywords": ["macos", "menubar", "claude", "codex", "opencode", "usage", "limits", "ai"],
   "homepage": "https://github.com/PratikRai0101/tally",
