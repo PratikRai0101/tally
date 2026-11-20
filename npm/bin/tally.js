@@ -156,16 +156,25 @@ function uninstall() {
   }
 }
 
+async function wrapped() {
+  const opts = { "no-open": flags.has("--no-open") };
+  const p = args.find((a) => a.startsWith("--period="));
+  if (p) opts.period = p.split("=")[1];
+  await require("../lib/wrapped.js").wrapped({ say, flags: opts, version: PKG.version });
+}
+
 function help() {
   say(`tally-menubar ${PKG.version}: installs Tally ${RELEASE.version}, AI plan limits in your macOS menu bar
 
+  npx tally-menubar wrapped      your AI coding Wrapped: share cards from your logs (any OS)
   npx tally-menubar              install Tally and open it
   npx tally-menubar@latest update   update to the newest version
   npx tally-menubar usage        print spend, tokens and limits in the terminal
   npx tally-menubar uninstall    remove Tally (--purge also removes its settings)
   npx tally-menubar version      show versions
 
-  Options: --no-open (don't launch after installing), --force (reinstall)
+  Options: --no-open (don't launch or open the browser), --force (reinstall),
+           --period=24h|7d|30d (which range the Wrapped opens on; default 30d)
   Installs to ~/Applications, or /Applications if Tally is already there.
   https://github.com/PratikRai0101/tally`);
 }
@@ -176,7 +185,7 @@ function version() {
   say(fs.existsSync(app) ? `installed: Tally ${appVersion(app)} at ${app}` : "installed: none");
 }
 
-const commands = { install, update: install, usage, uninstall, version, help };
+const commands = { install, update: install, usage, uninstall, version, help, wrapped };
 if (flags.has("--help") || flags.has("-h")) help();
 else if (flags.has("--version") || flags.has("-v")) version();
 else if (!commands[cmd]) { help(); process.exit(1); }

@@ -133,7 +133,7 @@ struct ShareStats {
         var t = "My \(unitWord) in AI coding: \(money) at API prices"
         if let m = multipleText { t += " on \(Fmt.money(planCost)) of plans (\(m))" }
         t += ". \(Fmt.tokens(tokens)) tokens, and apparently I'm \(persona.name == "Weekender" ? "a Weekender" : "on the \(persona.name)")."
-        return t + " Made with Tally, a free Mac menu bar app: https://github.com/PratikRai0101/tally"
+        return t + " Get yours: npx tally-menubar wrapped · https://github.com/PratikRai0101/tally"
     }
 }
 
@@ -293,7 +293,7 @@ private struct Display: View {
     let size: CGFloat
     var body: some View {
         VStack(alignment: .leading, spacing: -size * 0.2) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, l in heavy(l, size).lineLimit(1).fixedSize() }
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, l in heavy(l, size).lineLimit(1).minimumScaleFactor(0.5) }
         }
     }
 }
@@ -313,6 +313,16 @@ private func boxed(_ s: String, _ size: CGFloat, _ bg: Color, _ fg: Color) -> so
 private func sticker(_ s: String, _ bg: Color, _ angle: Double) -> some View {
     heavy(s, 76).foregroundStyle(W.ink).lineLimit(1).fixedSize()
         .padding(EdgeInsets(top: 16, leading: 30, bottom: 22, trailing: 30)).background(bg).rotationEffect(.degrees(angle))
+}
+
+/// The line that turns every shared card into an invitation.
+private struct InstallPill: View {
+    var size: CGFloat
+    var body: some View {
+        Text("npx tally-menubar wrapped").font(.system(size: size, weight: .medium, design: .monospaced))
+            .foregroundStyle(W.paper).padding(.horizontal, size * 0.6).padding(.vertical, size * 0.5)
+            .background(RoundedRectangle(cornerRadius: size * 0.3).fill(W.ink)).fixedSize()
+    }
 }
 
 private struct Brand: View {
@@ -356,8 +366,8 @@ private struct Intro: View {
                 p.mascot(cx: 540, cy: 760, size: 820, look: (0, 0.5))
             })
             HStack { Brand(); Spacer(); mono(st.dateRange) }.frame(width: 920).at(80, 80)
-            VStack(alignment: .leading, spacing: 40) {
-                Display(lines: ["Your \(st.unitWord) in", "AI coding."], size: 176)
+            VStack(alignment: .leading, spacing: 64) {
+                Display(lines: ["Your \(st.unitWord) in", "AI coding."], size: 176).frame(width: 940, alignment: .leading)
                 serif("Let’s see where it all went.", 52)
             }
             .frame(width: 940, height: 1920 - 120, alignment: .bottomLeading).at(80, 0)
@@ -589,7 +599,10 @@ private struct Summary: View {
                 }
             }
             .at(80, 1360)
-            HStack { Brand(); Spacer(); mono("\(st.dateRange) · tally-site.vercel.app", 24) }
+            HStack(alignment: .bottom) {
+                Brand(); Spacer()
+                VStack(alignment: .trailing, spacing: 14) { mono(st.dateRange, 22).opacity(0.75); InstallPill(size: 26) }
+            }
                 .frame(width: 920).frame(height: 1920 - 80, alignment: .bottom).at(80, 0)
         }
         .foregroundStyle(W.ink)
@@ -613,7 +626,10 @@ private struct Post: View {
                 }
             }
             .at(640, 52)
-            HStack { Brand(size: 34); Spacer(); mono("\(st.dateRange) · The \(st.persona.name)", 15) }
+            HStack(alignment: .bottom) {
+                Brand(size: 34); Spacer()
+                VStack(alignment: .trailing, spacing: 8) { mono("\(st.dateRange) · The \(st.persona.name)", 13).opacity(0.75); InstallPill(size: 15) }
+            }
                 .frame(width: 508).frame(height: 630 - 44, alignment: .bottom).at(640, 0)
         }
         .foregroundStyle(W.ink)

@@ -36,6 +36,18 @@ npx tally-menubar
 
 </div>
 
+### Get your AI coding Wrapped (any OS, nothing to install)
+
+```bash
+npx tally-menubar wrapped
+```
+
+Reads the logs Claude Code, Codex, Pi and OpenCode already keep, and opens your last 24 hours, 7 days or 30 days as six story slides and a card for X: your total at API prices, what your plans cost, your top plans and models, tokens counted in copies of *War and Peace*, and the hours you code. Works on macOS, Linux and Windows with Node 18+. Nothing is uploaded and no project names appear.
+
+<p align="center">
+  <img src="docs/wrapped.png" width="760" alt="Tally Wrapped: six dithered story slides showing a week's AI coding total, top plans, tokens, coding hours and a summary" />
+</p>
+
 > [!NOTE]
 > **Tally isn't notarized by Apple yet.** `npx tally-menubar` (or the [Terminal install](#install)) works straight away; if you download the zip in a browser, macOS asks you to approve it once in System Settings.
 
@@ -93,11 +105,7 @@ Tally reads the session logs your agents already write and the usage endpoints y
 - **Spend by project**: groups usage by the folder your agent worked in, folding worktrees into their repo
 - **Spend by model**: a dithered treemap with a legend naming each model and the plan that paid for it
 - Usage split by tool, so you can see how much came from Codex CLI versus Pi on the same plan
-- **Tally Wrapped**: the share button turns your day, week or month into a Wrapped-style deck: six 1080×1920 story slides (your total at API prices, top plans, tokens counted in copies of *War and Peace*, your coding hours and shift, a summary) plus a 1200×630 card for X. Copy one, save them all, or post. Project names are never included.
-
-<p align="center">
-  <img src="docs/wrapped.png" width="760" alt="Tally Wrapped: six dithered story slides showing a week's AI coding total, top plans, tokens, coding hours and a summary" />
-</p>
+- **Tally Wrapped**: the share button turns your day, week or month into a Wrapped-style deck: six 1080×1920 story slides (your total at API prices, top plans, tokens counted in copies of *War and Peace*, your coding hours and shift, a summary) plus a 1200×630 card for X. Copy one, save them all, or post. Project names are never included. Without the app: `npx tally-menubar wrapped`.
 
 ### Make it yours
 
