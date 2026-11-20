@@ -6,7 +6,7 @@
 npx tally-menubar wrapped
 ```
 
-Reads the session logs Claude Code, Codex, Pi and OpenCode already keep on your computer, prices them at API rates, and opens a Wrapped-style deck in your browser: six 1080×1920 story slides and a 1200×630 card for X. Pick 24 hours, 7 days or 30 days, set which plans you pay for, then copy, download or post. Works on macOS, Linux and Windows.
+Reads the session logs Claude Code, Codex, Pi and OpenCode already keep on your computer, prices them at API rates, and opens a Wrapped-style deck in your browser: 1080×1920 story slides and a 1200×630 card for X. If you hit a plan limit, one slide counts every lockout ("14 times you hit the wall") and how long you waited for the resets. Pick 24 hours, 7 days or 30 days, set which plans you pay for, then copy, download or post. Works on macOS, Linux and Windows.
 
 Nothing is uploaded and no project names are shown. The only network request is LiteLLM's public model price table, cached for a week. Your plan is read from `~/.claude.json` and `~/.codex/auth.json` (never the Keychain), and you can change it on the page.
 

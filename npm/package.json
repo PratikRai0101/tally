@@ -1,6 +1,6 @@
 {
   "name": "tally-menubar",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Your AI coding Wrapped (npx tally-menubar wrapped, any OS), and the installer for Tally, the macOS menu bar app for Claude, Codex and OpenCode limits, resets and spend.",
   "keywords": ["wrapped", "claude-code", "codex", "opencode", "ai-usage", "macos", "menubar", "claude", "usage", "limits", "ai"],
   "homepage": "https://github.com/PratikRai0101/tally",

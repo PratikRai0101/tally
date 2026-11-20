@@ -42,7 +42,7 @@ npx tally-menubar
 npx tally-menubar wrapped
 ```
 
-Reads the logs Claude Code, Codex, Pi and OpenCode already keep, and opens your last 24 hours, 7 days or 30 days as six story slides and a card for X: your total at API prices, what your plans cost, your top plans and models, tokens counted in copies of *War and Peace*, and the hours you code. Works on macOS, Linux and Windows with Node 18+. Nothing is uploaded and no project names appear.
+Reads the logs Claude Code, Codex, Pi and OpenCode already keep, and opens your last 24 hours, 7 days or 30 days as six story slides and a card for X: your total at API prices, what your plans cost, your top plans and models, tokens counted in copies of *War and Peace*, the hours you code, and every time a plan locked you out. Works on macOS, Linux and Windows with Node 18+. Nothing is uploaded and no project names appear.
 
 <p align="center">
   <img src="docs/wrapped.png" width="760" alt="Tally Wrapped: six dithered story slides showing a week's AI coding total, top plans, tokens, coding hours and a summary" />

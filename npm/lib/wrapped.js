@@ -134,8 +134,30 @@ function serviceFrom(provider) {
   }
 }
 
-function parseClaude(file, rate, out) {
-  eachLine(file, ['"usage"'], (o) => {
+// ---------- limit hits ----------
+
+/** "resets 12:40am" → the next time the clock shows 12:40 am after t. */
+function clockReset(t, text) {
+  const m = /resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(text || "");
+  if (!m) return null;
+  const d = new Date(t), r = new Date(d.getFullYear(), d.getMonth(), d.getDate(), (+m[1] % 12) + (/pm/i.test(m[3]) ? 12 : 0), +(m[2] || 0));
+  if (r.getTime() <= t) r.setDate(r.getDate() + 1);
+  return r.getTime();
+}
+const textOf = (m) => ((m && Array.isArray(m.content) ? m.content : []).find((b) => b && b.type === "text") || {}).text || "";
+const windowKind = (mins) => mins <= 360 ? "five_hour" : mins <= 2 * 1440 ? "daily" : mins <= 8 * 1440 ? "seven_day" : "monthly";
+
+function parseClaude(file, rate, out, hits) {
+  eachLine(file, ['"usage"', '"rate_limit"'], (o) => {
+    if (o.isApiErrorMessage && o.error === "rate_limit") {
+      // Claude Code writes this when a request is refused because a plan limit is used up.
+      const t = Date.parse(o.timestamp);
+      if (!t) return;
+      const q = o.quotaLimits || (o.apiErrorParams && o.apiErrorParams.rate_limit_info) || {}, text = textOf(o.message);
+      hits.push({ t, svc: "claude", kind: q.rateLimitType || (/weekly/i.test(text) ? "seven_day" : /5-hour/i.test(text) ? "five_hour" : "limit"),
+        resetAt: typeof q.resetsAt === "number" ? q.resetsAt * 1000 : clockReset(t, text) });
+      return;
+    }
     const m = o.message, u = m && m.usage;
     if (!u || !m.model || m.model === "<synthetic>") return;
     const t = Date.parse(o.timestamp);
@@ -149,15 +171,28 @@ function parseClaude(file, rate, out) {
   });
 }
 
-function parseCodex(file, rate, out) {
+function parseCodex(file, rate, out, hits, near) {
   let model = "gpt-5-codex", lastTotal = -1;
-  eachLine(file, ['"token_count"', '"turn_context"'], (o, kind) => {
+  eachLine(file, ['"token_count"', '"turn_context"', "usage limit"], (o, kind) => {
     const p = o.payload;
     if (!p) return;
     if (kind === 1) { if (p.model) model = p.model; return; }
-    if (p.type !== "token_count" || !p.info || !p.info.last_token_usage) return;
     const t = Date.parse(o.timestamp);
     if (!t) return;
+    if (kind === 2) {
+      if (p.type === "error" && /usage limit/i.test(String(p.message || ""))) hits.push({ t, svc: "codex", kind: "limit", resetAt: null });
+      return;
+    }
+    if (p.type !== "token_count") return;
+    // Codex logs how much of each limit window is used; 100% means it locked you out.
+    for (const w of [p.rate_limits && p.rate_limits.primary, p.rate_limits && p.rate_limits.secondary]) {
+      if (!w || typeof w.used_percent !== "number") continue;
+      const resetAt = typeof w.resets_at === "number" ? w.resets_at * 1000 : typeof w.resets_in_seconds === "number" ? t + w.resets_in_seconds * 1000 : null;
+      const k = windowKind(w.window_minutes || 0);
+      if (w.used_percent >= 100) hits.push({ t, svc: "codex", kind: k, resetAt });
+      else near.push({ t, svc: "codex", kind: k, pct: w.used_percent, resetAt });
+    }
+    if (!p.info || !p.info.last_token_usage) return;
     const total = int(p.info.total_token_usage && p.info.total_token_usage.total_tokens);
     if (total === lastTotal) return;
     lastTotal = total;
@@ -170,9 +205,17 @@ function parseCodex(file, rate, out) {
   });
 }
 
-function parsePi(file, rate, out) {
-  eachLine(file, ['"usage"'], (o) => {
-    const m = o.message, u = m && m.usage;
+const LIMIT_ERROR = /usage limit|UsageLimitError|hit your .{0,40}limit|limit (?:has been )?reached/i;
+
+function parsePi(file, rate, out, hits) {
+  eachLine(file, ['"usage"', '"errorMessage"'], (o) => {
+    const m = o.message;
+    if (m && typeof m.errorMessage === "string" && LIMIT_ERROR.test(m.errorMessage)) {
+      const t = Date.parse(o.timestamp) || (typeof m.timestamp === "number" ? m.timestamp : 0);
+      const mins = /try again in ~?(\d+)\s*min/i.exec(m.errorMessage);
+      if (t) hits.push({ t, svc: serviceFrom(m.provider), kind: "limit", resetAt: mins ? t + +mins[1] * 60000 : null });
+    }
+    const u = m && m.usage;
     if (!u) return;
     const t = Date.parse(o.timestamp) || (typeof m.timestamp === "number" ? m.timestamp : 0);
     if (!t) return;
@@ -215,14 +258,34 @@ function scanOpenCode(since, out) {
 async function scan() {
   const since = Date.now() - PERIODS["30d"] * 1000;
   const rate = rater(await loadPrices());
-  const recs = [];
+  const recs = [], hits = [], near = [];
   const roots = (dirs) => dirs.flatMap((d) => jsonlFiles(path.join(HOME, ...d.split("/")), since));
-  for (const f of roots([".claude/projects", ".config/claude/projects"])) parseClaude(f, rate, recs);
-  for (const f of roots([".codex/sessions", ".codex/archived_sessions"])) parseCodex(f, rate, recs);
-  for (const f of roots([".pi/agent/sessions"])) parsePi(f, rate, recs);
+  for (const f of roots([".claude/projects", ".config/claude/projects"])) parseClaude(f, rate, recs, hits);
+  for (const f of roots([".codex/sessions", ".codex/archived_sessions"])) parseCodex(f, rate, recs, hits, near);
+  for (const f of roots([".pi/agent/sessions"])) parsePi(f, rate, recs, hits);
   scanOpenCode(since, recs);
   const seen = new Set();
-  return recs.filter((r) => r.t >= since && (!r.key || (!seen.has(r.key) && seen.add(r.key))));
+  return {
+    recs: recs.filter((r) => r.t >= since && (!r.key || (!seen.has(r.key) && seen.add(r.key)))),
+    hits: clusterHits(hits.filter((h) => h.t >= since)),
+    near: near.filter((n) => n.t >= since),
+  };
+}
+
+/** Many refused requests can belong to one lockout: same plan and limit, same reset (or within 2 h when the reset is unknown). */
+function clusterHits(hits) {
+  hits.sort((a, b) => a.t - b.t);
+  const out = [];
+  for (const h of hits) {
+    let prev = null;
+    for (let i = out.length - 1; i >= 0; i--) if (out[i].svc === h.svc) { prev = out[i]; break; }
+    const same = prev && (h.resetAt && prev.resetAt ? Math.abs(h.resetAt - prev.resetAt) < 15 * 60000 && (prev.kind === h.kind || prev.kind === "limit" || h.kind === "limit")
+      : h.t - prev.last < 2 * 3600000);
+    if (same) { prev.last = h.t; if (!prev.resetAt && h.resetAt) prev.resetAt = h.resetAt; if (prev.kind === "limit") prev.kind = h.kind; }
+    else out.push({ ...h, last: h.t });
+  }
+  // A lockout of unknown type that resets within ~5 h was the session window; longer means weekly.
+  return out.map(({ last, ...h }) => (h.kind === "limit" && h.resetAt ? { ...h, kind: h.resetAt - h.t > 6 * 3600000 ? "seven_day" : "five_hour" } : h));
 }
 
 // ---------- plans, read from files the CLIs keep (never the Keychain, never a network call) ----------
@@ -255,7 +318,7 @@ function detectPlans() {
 
 // ---------- numbers per period (no project names, no paths) ----------
 
-function periodData(recs, key, now) {
+function periodData({ recs, hits, near }, key, now) {
   const secs = PERIODS[key], since = now - secs * 1000;
   const rs = recs.filter((r) => r.t >= since);
   const services = {}, models = {}, sessions = new Set();
@@ -292,6 +355,10 @@ function periodData(recs, key, now) {
     seconds: secs, services, sessions: sessions.size,
     models: Object.entries(models).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, cost]) => ({ name, cost })),
     hours, weekdays, bars, barLabels: labels, peakBar: peak >= 0 ? starts[peak] : null,
+    limits: {
+      hits: hits.filter((h) => h.t >= since).map((h) => ({ t: h.t, svc: h.svc, kind: h.kind, resetAt: h.resetAt })),
+      closest: near.filter((n) => n.t >= since).sort((a, b) => b.pct - a.pct).map((n) => ({ t: n.t, svc: n.svc, kind: n.kind, pct: n.pct }))[0] || null,
+    },
   };
 }
 
@@ -307,7 +374,7 @@ function opener(file) {
 
 async function wrapped({ say, flags, version }) {
   say("Reading your Claude Code, Codex, Pi and OpenCode logs (last 30 days)…");
-  const recs = await scan();
+  const scanned = await scan(), recs = scanned.recs;
   if (!recs.length) {
     say("No usage found. Tally reads ~/.claude/projects, ~/.codex/sessions, ~/.pi/agent/sessions and OpenCode's database.");
     return;
@@ -315,7 +382,7 @@ async function wrapped({ say, flags, version }) {
   const now = Date.now();
   const data = {
     generated: now, version, plans: detectPlans(),
-    periods: Object.fromEntries(Object.keys(PERIODS).map((k) => [k, periodData(recs, k, now)])),
+    periods: Object.fromEntries(Object.keys(PERIODS).map((k) => [k, periodData(scanned, k, now)])),
     defaultPeriod: ["24h", "7d", "30d"].includes(flags.period) ? flags.period : "30d",
   };
   const dir = path.join(__dirname, "..", "wrapped");
@@ -332,6 +399,7 @@ async function wrapped({ say, flags, version }) {
   const tokens = Object.values(m.services).reduce((s, v) => s + v.tokens, 0);
   const tk = tokens >= 1e9 ? (tokens / 1e9).toFixed(2) + "B" : (tokens / 1e6).toFixed(1) + "M";
   say(`\n  Last 30 days: ${money(api)} at API prices · ${tk} tokens · ${m.sessions} sessions`);
+  if (m.limits.hits.length) say(`  You hit a plan limit ${m.limits.hits.length} time${m.limits.hits.length > 1 ? "s" : ""}.`);
   say(`  Your Wrapped: ${out}`);
   if (!flags["no-open"]) {
     const [bin, argv] = opener(out);

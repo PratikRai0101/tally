@@ -58,7 +58,7 @@ const DATA = /*__DATA__*/null;
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const SERIF = '"Newsreader", Georgia, serif';
 const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
-const C = { paper: "#fbfbfa", ink: "#0e0e0d", orange: "#e5874c", green: "#3fb987", grey: "#a9a9a5", soft: "#d9d9d5", dim: "#3a3a37", muted: "#6b6b68" };
+const C = { red: "#e5484d", hair: "#e6e6e3", paper: "#fbfbfa", ink: "#0e0e0d", orange: "#e5874c", green: "#3fb987", grey: "#a9a9a5", soft: "#d9d9d5", dim: "#3a3a37", muted: "#6b6b68" };
 const TILE = { claude: C.orange, codex: C.paper, opencodeGo: C.green, opencodeZen: "#4e95f5", openai: "#9b7bea", other: "#d9b44a" };
 const NAMES = { claude: "Claude", codex: "Codex", opencodeGo: "OpenCode Go", opencodeZen: "OpenCode Zen", openai: "OpenAI", other: "Other" };
 const PLANS = {
@@ -233,12 +233,14 @@ function boxed(ctx, s, x, baseline, size, bg, fg) {
   put(ctx, s, x + pad, baseline, fg);
   return w + pad * 2;
 }
-function sticker(ctx, s, x, y, bg, deg) {
+function sticker(ctx, s, x, y, bg, deg, maxW = 900) {
   heavy(ctx, 76);
-  const W = ctx.measureText(s).width + 60, H = 114;
+  let size = 76;
+  if (ctx.measureText(s).width + 60 > maxW) { size = 76 * (maxW - 60) / ctx.measureText(s).width; heavy(ctx, size); }
+  const W = ctx.measureText(s).width + 60, H = size * 1.5;
   ctx.save(); ctx.translate(x + W / 2, y + H / 2); ctx.rotate(deg * Math.PI / 180);
   ctx.fillStyle = bg; ctx.fillRect(-W / 2, -H / 2, W, H);
-  put(ctx, s, -W / 2 + 30, -H / 2 + 16 + 60, C.ink);
+  put(ctx, s, -W / 2 + 30, -H / 2 + size * 0.21 + size * 0.79, C.ink);
   ctx.restore();
 }
 function icon(ctx, x, y, s) {
@@ -398,6 +400,54 @@ function hours(ctx, st) {
   boxed(ctx, l2, 80, b2, sz, C.orange, C.ink);
 }
 
+const KIND = { five_hour: "5-hour limit", seven_day: "weekly limit", seven_day_opus: "weekly Opus limit", seven_day_sonnet: "weekly Sonnet limit", daily: "daily limit", monthly: "monthly limit", limit: "usage limit" };
+const kindName = (k) => KIND[k] || String(k).replace(/_/g, " ") + " limit";
+function span(ms) {
+  const m = Math.round(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  return d ? `${d}\u00a0day${d > 1 ? "s" : ""}` + (h ? ` ${h}h` : "") : h ? `${h}h` + (mm ? `\u00a0${mm}m` : "") : `${mm}\u00a0min`;
+}
+const when = (t) => { const d = new Date(t); return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " · " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toLowerCase(); };
+const showLimits = (P) => P.limits.hits.length > 0 || (P.limits.closest && P.limits.closest.pct >= 80);
+
+/** The lockouts slide: every time a plan refused you, and the case for a warning before the next one. */
+function limits(ctx, st) {
+  bg(ctx, C.paper);
+  const L = st.P.limits, hits = L.hits, n = hits.length;
+  mono(ctx, "Your limits", 80, 172, 26, C.muted);
+  const big = n ? String(n) : Math.round(L.closest.pct) + "%";
+  dots(ctx, 0, 0, W, H, 5, [C.red, C.ink, null], (m) => {
+    setFont(m, 800, 520, SANS, -520 * 0.03);
+    const bw = m.measureText(big).width;
+    if (bw > 940) { const sz = 520 * 940 / bw; setFont(m, 800, sz, SANS, -sz * 0.03); }
+    const g = m.createLinearGradient(0, 760 - 380, 0, 760); g.addColorStop(0, ch(0, 0.55)); g.addColorStop(1, ch(0, 1));
+    m.fillStyle = g; m.textAlign = "left"; m.textBaseline = "alphabetic"; m.fillText(big, 60, 760);
+  });
+  display(ctx, n ? [n === 1 ? "time you hit" : "times you hit", "the wall."] : ["was your", "closest call."], 120, 80, 830, C.ink);
+  // one row per plan and limit, most hits first
+  const groups = new Map();
+  for (const h of hits) {
+    const k = h.svc + "|" + h.kind, g = groups.get(k) || { svc: h.svc, kind: h.kind, count: 0, last: 0 };
+    g.count++; g.last = Math.max(g.last, h.t); groups.set(k, g);
+  }
+  const rows = n ? [...groups.values()].sort((a, b) => b.count - a.count || b.last - a.last) : [{ ...L.closest, count: 0, last: L.closest.t }];
+  const shown = rows.slice(0, 3), y0 = 1130, rh = 76;
+  shown.forEach((g, i) => {
+    const y = y0 + i * rh;
+    ctx.fillStyle = C.hair; ctx.fillRect(80, y - 50, 920, 2);
+    mono(ctx, `${NAMES[g.svc] || g.svc} · ${kindName(g.kind)}`, 80, y, 26, C.ink);
+    const right = n ? `${g.count}× · last ${new Date(g.last).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : when(g.t);
+    mono(ctx, right, 1000, y, 24, C.muted, "right");
+  });
+  ctx.fillStyle = C.hair; ctx.fillRect(80, y0 + shown.length * rh - 50, 920, 2);
+  const waited = hits.reduce((a, h) => a + (h.resetAt && h.resetAt > h.t ? h.resetAt - h.t : 0), 0);
+  const label = n ? (waited ? `Locked out for up to ${span(waited)}.` : "Every one mid-task.") : "You never hit the wall. Yet.";
+  sticker(ctx, label, 70, y0 + shown.length * rh + 30, n ? C.orange : C.green, -3);
+  brand(ctx, 80, H - 80 - 56, 56, C.ink);
+  pill(ctx, "npx tally-menubar", 1000, H - 80, 26, C.ink, C.paper);
+  mono(ctx, "Mac menu bar app", 1000, H - 80 - 26 - 26 - 22, 22, C.ink, "right", 0.75);
+  serif(ctx, "Tally sits in your menu bar and warns you at 80%, or as soon as you’re on pace to run out, so you can wrap up first.", 80, H - 215, 46, 920, C.ink);
+}
+
 function summary(ctx, st) {
   bg(ctx, C.orange);
   art(ctx, 80, 180, 920, 740, 5);
@@ -426,7 +476,8 @@ function post(ctx, st) {
   ctx.restore();
 }
 
-const SLIDES = [["intro", intro], ["total", total], ["plans", plans], ["tokens", tokens], ["hours", hours], ["summary", summary], ["post", post]];
+const ALL = [["intro", intro], ["total", total], ["plans", plans], ["tokens", tokens], ["hours", hours], ["limits", limits], ["summary", summary], ["post", post]];
+let SLIDES = ALL;
 
 // ---------- page ----------
 const strip = document.getElementById("strip"), toast = document.getElementById("toast");
@@ -447,6 +498,7 @@ async function copy(i) {
 
 function render() {
   const st = stats();
+  SLIDES = ALL.filter(([name]) => name !== "limits" || showLimits(st.P));
   strip.innerHTML = ""; canvases = [];
   SLIDES.forEach(([name, draw], i) => {
     const isPost = name === "post", cv = document.createElement("canvas");
@@ -454,7 +506,7 @@ function render() {
     draw(cv.getContext("2d"), st);
     const fig = document.createElement("figure"); if (isPost) fig.className = "post";
     const cap = document.createElement("figcaption");
-    cap.innerHTML = `<span>${isPost ? "Card for X · 1200×630" : `Story ${i + 1} of 6`}</span>`;
+    cap.innerHTML = `<span>${isPost ? "Card for X · 1200×630" : `Story ${i + 1} of ${SLIDES.length - 1}`}</span>`;
     const b1 = Object.assign(document.createElement("button"), { className: "btn", textContent: "Copy" }); b1.onclick = () => copy(i);
     const b2 = Object.assign(document.createElement("button"), { className: "btn", textContent: "Download" }); b2.onclick = () => download(i);
     cap.append(b1, b2); fig.append(cv, cap); strip.append(fig); canvases.push(cv);
