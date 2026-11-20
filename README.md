@@ -10,6 +10,7 @@
   </p>
 
   <p>
+    <a href="https://tally-site.vercel.app">Website</a> ·
     <a href="#install">Install</a> ·
     <a href="https://github.com/PratikRai0101/tally/releases/latest">Download</a> ·
     <a href="https://github.com/PratikRai0101/tally/issues">Issues</a> ·
@@ -20,13 +21,14 @@
     <a href="#requirements"><img src="https://img.shields.io/badge/macOS-14%2B-19191B?logo=apple&amp;logoColor=white" alt="macOS 14 or later" /></a>
     <a href="#architecture"><img src="https://img.shields.io/badge/Swift-5.10-E2774F?logo=swift&amp;logoColor=white" alt="Swift 5.10" /></a>
     <a href="https://github.com/PratikRai0101/tally/releases/latest"><img src="https://img.shields.io/github/v/release/PratikRai0101/tally?color=42C08D" alt="Latest release" /></a>
+    <a href="https://www.npmjs.com/package/tally-menubar"><img src="https://img.shields.io/npm/v/tally-menubar?label=npx%20tally-menubar&amp;color=19191B" alt="npm: tally-menubar" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3A3160.svg" alt="MIT License" /></a>
     <a href="https://github.com/PratikRai0101/tally/stargazers"><img src="https://img.shields.io/github/stars/PratikRai0101/tally?style=flat&amp;color=E6AA5A" alt="GitHub stars" /></a>
   </p>
 </div>
 
 > [!NOTE]
-> **Tally isn't notarized by Apple yet.** The [Terminal install](#install) works straight away; if you download the zip in a browser, macOS asks you to approve it once in System Settings.
+> **Tally isn't notarized by Apple yet.** `npx tally-menubar` (or the [Terminal install](#install)) works straight away; if you download the zip in a browser, macOS asks you to approve it once in System Settings.
 
 ## Why Tally?
 
@@ -108,8 +110,25 @@ Cards are grouped by **plan**, not by app. If one tool spends on several plans (
 
 - macOS 14 (Sonoma) or later, on Apple Silicon or Intel
 - At least one of Claude Code, Codex, Pi, or OpenCode, signed in
+- Node 18 or later, for the npx install
 
-### Terminal
+### npx (recommended)
+
+```bash
+npx tally-menubar
+```
+
+This downloads the latest release from GitHub, checks it against the SHA-256 pinned in the [`tally-menubar`](https://www.npmjs.com/package/tally-menubar) package, installs it to `~/Applications` (or updates it where it already is), and opens it. macOS doesn't flag files that Node downloads, so there's no "Apple could not verify" prompt.
+
+| Command | What it does |
+| --- | --- |
+| `npx tally-menubar@latest update` | Update to the newest release |
+| `npx tally-menubar usage` | Print spend, tokens and limits in the terminal |
+| `npx tally-menubar uninstall` | Remove Tally (`--purge` also removes its settings) |
+
+The installer's source is in [`npm/`](npm).
+
+### Terminal, without Node
 
 ```bash
 curl -fsSL https://github.com/PratikRai0101/tally/releases/latest/download/Tally.zip -o /tmp/Tally.zip \
@@ -120,7 +139,7 @@ curl -fsSL https://github.com/PratikRai0101/tally/releases/latest/download/Tally
 
 Get `Tally.zip` from the [latest release](https://github.com/PratikRai0101/tally/releases/latest), unzip it, and drag **Tally** into Applications. The first time you open it, macOS will block it because it isn't notarized: open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
 
-To uninstall, right-click the menu bar meters → **Quit Tally**, then delete Tally from Applications.
+To uninstall, run `npx tally-menubar uninstall`, or right-click the menu bar meters → **Quit Tally** and delete Tally from Applications.
 
 ## Quick start
 
