@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The app that made the request (where the logs come from).
 enum Tool: String, CaseIterable, Identifiable, Hashable {
-    case claudeCode, codex, pi, opencode, grok
+    case claudeCode, codex, pi, opencode, grok, antigravity, geminiCli
     var id: String { rawValue }
     var name: String {
         switch self {
@@ -12,6 +12,8 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         case .pi: return "Pi"
         case .opencode: return "OpenCode"
         case .grok: return "Grok CLI"
+        case .antigravity: return "Antigravity"
+        case .geminiCli: return "Gemini CLI"
         }
     }
 
@@ -22,13 +24,14 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         case .pi: return .pi
         case .opencode: return .opencode
         case .grok: return .grok
+        case .antigravity, .geminiCli: return .gemini
         }
     }
 }
 
 /// The subscription / account that paid for it. Cards, limits and the menu bar are per service.
 enum Service: String, CaseIterable, Identifiable, Hashable {
-    case claude, codex, cursor, grok, opencodeGo, opencodeZen, openai, other
+    case claude, codex, cursor, grok, gemini, opencodeGo, opencodeZen, openai, other
 
     var id: String { rawValue }
 
@@ -38,6 +41,7 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         case .codex: return "Codex"
         case .cursor: return "Cursor"
         case .grok: return "Grok"
+        case .gemini: return "Gemini"
         case .opencodeGo: return "OpenCode Go"
         case .opencodeZen: return "OpenCode Zen"
         case .openai: return "OpenAI"
@@ -51,6 +55,7 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         case .codex: return "ChatGPT"
         case .cursor: return "Cursor"
         case .grok: return "Grok"
+        case .gemini: return "Google AI"
         case .opencodeGo: return "Go subscription"
         case .opencodeZen: return "Free models"
         case .openai: return "API"
@@ -64,6 +69,7 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         case .codex: return "circle.hexagongrid"
         case .cursor: return "cursorarrow"
         case .grok: return "sparkle"
+        case .gemini: return "sparkles"
         case .opencodeGo: return "bolt.square"
         case .opencodeZen: return "square.dashed"
         case .openai: return "circle.grid.cross"
@@ -89,6 +95,7 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         case .codex: return .codex
         case .cursor: return .cursor
         case .grok: return .grok
+        case .gemini: return .gemini
         case .opencodeGo, .opencodeZen: return .opencode
         case .openai: return .openai
         case .other: return nil
@@ -101,6 +108,7 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         case .codex: return .dynamic(light: NSColor(hex: 0x3A3A40), dark: NSColor(hex: 0xE8E8EA))
         case .cursor: return NSColor(hex: 0x2BB5C9)
         case .grok: return NSColor(hex: 0xE5566F)
+        case .gemini: return NSColor(hex: 0x5B7CFA)
         case .opencodeGo: return NSColor(hex: 0x42C08D)
         case .opencodeZen: return NSColor(hex: 0x4E95F5)
         case .openai: return NSColor(hex: 0x9B7BEA)
@@ -108,9 +116,9 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    var hasLimits: Bool { self == .claude || self == .codex || self == .opencodeGo || self == .cursor || self == .grok }
+    var hasLimits: Bool { self == .claude || self == .codex || self == .opencodeGo || self == .cursor || self == .grok || self == .gemini }
 
-    /// Shown even with no usage on this Mac (their limits are the point). Cursor and Grok appear once
+    /// Shown even with no usage on this Mac (their limits are the point). Cursor, Grok and Gemini appear once
     /// they have usage or a live reading, so people who don't use them don't get an empty card.
     var showsWithoutUsage: Bool { self == .claude || self == .codex || self == .opencodeGo }
 
@@ -120,6 +128,7 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         case "anthropic", "claude": return .claude
         case "openai-codex", "codex", "chatgpt": return .codex
         case "xai", "grok": return .grok
+        case "google", "gemini", "google-gemini", "antigravity": return .gemini
         case "cursor": return .cursor
         case "opencode-go": return .opencodeGo
         case "opencode", "opencode-zen": return .opencodeZen

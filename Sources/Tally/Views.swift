@@ -251,7 +251,8 @@ struct ServiceCard: View {
                 ServiceMark(service: service, size: 28)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(service.name).font(.system(size: 14, weight: .medium))
-                    Text(lim?.plan ?? service.defaultPlan).font(.system(size: 11.5)).foregroundStyle(Theme.dim)
+                    Text(lim?.plan ?? prefs.planOption(service, detected: nil)?.name ?? service.defaultPlan)
+                        .font(.system(size: 11.5)).foregroundStyle(Theme.dim)
                 }
                 Spacer()
                 if let lim, let f = Freshness(lim) {
@@ -331,7 +332,7 @@ struct ServiceCard: View {
                              forecast: store.forecast(service, w))
                         .opacity(Freshness(lim)?.stale == true ? 0.55 : 1)
                 }
-                valueRow(lim)
+                valueRow(plan: lim.plan)
                 ForEach(lim.notes, id: \.0) { label, value in
                     HStack {
                         Text(label).font(.system(size: 12))
@@ -341,14 +342,16 @@ struct ServiceCard: View {
                 }
             } else if service.hasLimits {
                 Text("Checking limits…").font(.system(size: 11.5)).foregroundStyle(Theme.faint)
+            } else {
+                valueRow(plan: nil)
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 16)
     }
 
     /// "Claude Pro · $20/mo → $69 at API prices this week (your plan: $4.67) · 14.8× value"
-    @ViewBuilder private func valueRow(_ lim: ServiceLimits) -> some View {
-        let price = prefs.price(service, plan: lim.plan)
+    @ViewBuilder private func valueRow(plan: String?) -> some View {
+        let price = prefs.price(service, plan: plan)
         let used = store.services[service]?.cost ?? 0
         if price > 0 && used > 0 {
             let share = price * store.period.seconds / (30 * 86_400)

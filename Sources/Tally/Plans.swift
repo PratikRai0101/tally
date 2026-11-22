@@ -67,6 +67,12 @@ enum PlanCatalog {
                 ]
             }
             return list
+        case .gemini:
+            return [
+                .init(id: "free", name: "Free", price: 0),
+                .init(id: "ai-pro", name: "Google AI Pro", price: 20),
+                .init(id: "ai-ultra", name: "Google AI Ultra", price: 250),
+            ]
         case .opencodeGo:
             return [
                 .init(id: "go", name: "Go", price: 10),
@@ -100,6 +106,8 @@ enum PlanCatalog {
             id = has("heavy") ? "heavy" : has("supergrok") ? "supergrok" : has("premium+") ? "x-premium-plus"
                 : has("ultra") ? "ultra" : has("super") ? "super" : has("premium") ? "premium" : has("plus") ? "plus"
                 : has("free") ? "free" : nil
+        case .gemini:
+            id = has("ultra") ? "ai-ultra" : has("pro") ? "ai-pro" : has("free") ? "free" : nil
         case .opencodeGo:
             id = has("plus") ? "go-plus" : has("team") ? "go-teams" : "go"
         case .opencodeZen, .openai, .other:

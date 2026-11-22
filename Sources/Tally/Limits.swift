@@ -395,6 +395,138 @@ enum LimitsFetcher {
                                           resetsAt: end, windowSeconds: secs))
     }
 
+    // MARK: Gemini / Antigravity — antigravity-oauth-token or ~/.gemini/oauth_creds.json → daily-cloudcode-pa.googleapis.com
+
+    /// nil when neither Antigravity nor Gemini CLI is signed in on this Mac.
+    static func gemini() async -> ServiceLimits? {
+        guard let cred = loadGeminiToken() else { return nil }
+        var result = ServiceLimits(service: .gemini, windows: [])
+        if let exp = cred.expiry, exp < Date().addingTimeInterval(60) {
+            // Antigravity / Gemini CLI renew their own token when used; Tally never touches it.
+            result.error = "Gemini's sign-in expired \(Fmt.ago(exp)). It renews the next time you use Antigravity or Gemini CLI."
+            return result
+        }
+        var lastStatus = 0
+        for host in ["https://daily-cloudcode-pa.googleapis.com", "https://cloudcode-pa.googleapis.com"] {
+            var req = URLRequest(url: URL(string: "\(host)/v1internal:retrieveUserQuotaSummary")!)
+            req.httpMethod = "POST"
+            req.httpBody = Data("{}".utf8)
+            req.setValue("Bearer \(cred.accessToken)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("antigravity/hub/2.24.0", forHTTPHeaderField: "User-Agent")
+            req.timeoutInterval = 15
+            guard let (body, resp) = try? await URLSession.shared.data(for: req) else { continue }
+            lastStatus = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard lastStatus == 200, let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+                if lastStatus == 401 || lastStatus == 403 {
+                    result.error = "Gemini's sign-in expired. It renews the next time you use Antigravity or Gemini CLI."
+                    return result
+                }
+                continue
+            }
+            parseGemini(json, into: &result)
+            if !result.windows.isEmpty {
+                result.source = "live"
+                result.checkedAt = Date()
+                return result
+            }
+        }
+        result.error = lastStatus == 0 ? "Couldn't reach Google Cloud Code" : "Gemini usage unavailable (\(lastStatus))"
+        return result
+    }
+
+    private struct GeminiCred {
+        let accessToken: String
+        let expiry: Date?
+        let mtime: Date
+    }
+
+    /// Reads the newest OAuth token from Antigravity (desktop, CLI, IDE, T3 Code ACP) or Gemini CLI, read-only.
+    private static func loadGeminiToken() -> GeminiCred? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var candidates = [
+            home.appendingPathComponent(".gemini/antigravity/antigravity-oauth-token"),
+            home.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"),
+            home.appendingPathComponent(".gemini/antigravity-ide/antigravity-oauth-token"),
+            home.appendingPathComponent(".gemini/oauth_creds.json"),
+        ]
+        let t3Root = home.appendingPathComponent(".t3/userdata/providers/antigravity")
+        if let subs = try? FileManager.default.contentsOfDirectory(at: t3Root, includingPropertiesForKeys: nil) {
+            for sub in subs {
+                candidates.append(sub.appendingPathComponent("antigravity-acp/antigravity-oauth-token"))
+            }
+        }
+        var found: [GeminiCred] = []
+        for url in candidates {
+            guard let data = try? Data(contentsOf: url),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            let tok = (obj["token"] as? [String: Any]) ?? obj
+            guard let access = tok["access_token"] as? String, !access.isEmpty else { continue }
+            let expiry = parseDate(tok["expiry"] ?? tok["expiry_date"] ?? tok["expires_at"])
+            let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            found.append(GeminiCred(accessToken: access, expiry: expiry, mtime: mtime))
+        }
+        guard !found.isEmpty else { return nil }
+        let now = Date().addingTimeInterval(60)
+        // Prefer a non-expired token with the furthest expiry; otherwise the most recently updated one.
+        if let valid = found.filter({ ($0.expiry ?? .distantFuture) > now })
+            .max(by: { ($0.expiry ?? $0.mtime) < ($1.expiry ?? $1.mtime) }) {
+            return valid
+        }
+        return found.max(by: { $0.mtime < $1.mtime })
+    }
+
+    /// Fills usage windows from a v1internal:retrieveUserQuotaSummary response.
+    static func parseGemini(_ json: [String: Any], into result: inout ServiceLimits) {
+        let root = (json["response"] as? [String: Any]) ?? json
+        guard let groups = root["groups"] as? [[String: Any]] else { return }
+
+        func windowMeta(_ w: String?) -> (label: String, secs: Double) {
+            switch (w ?? "").lowercased() {
+            case "5h", "five_hour": return ("Session", 5 * 3600)
+            case "daily", "1d", "24h": return ("Daily", 86_400)
+            case "weekly", "7d": return ("Weekly", 7 * 86_400)
+            case "monthly", "30d": return ("Monthly", 30 * 86_400)
+            default: return ("Quota", 5 * 3600)
+            }
+        }
+
+        func shortGroup(_ name: String) -> String {
+            var s = name.replacingOccurrences(of: " models", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: " Models", with: "")
+                .replacingOccurrences(of: " and ", with: " & ")
+                .trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("Gemini 4 ") { s = String(s.dropFirst("Gemini 4 ".count)) }
+            return s
+        }
+
+        var primary: [LimitWindow] = []
+        var secondary: [LimitWindow] = []
+
+        for g in groups {
+            let groupName = (g["displayName"] as? String) ?? ""
+            guard let buckets = g["buckets"] as? [[String: Any]] else { continue }
+            let isMainGemini = groupName.lowercased() == "gemini models"
+                || buckets.contains { let id = ($0["bucketId"] as? String) ?? ""; return id == "gemini-5h" || id == "gemini-weekly" }
+            for b in buckets {
+                guard let rem = number(b["remainingFraction"]) else { continue }
+                let used = min(100, max(0, (1.0 - rem) * 100.0))
+                let meta = windowMeta(b["window"] as? String)
+                let reset = parseDate(b["resetTime"])
+                if isMainGemini {
+                    primary.append(LimitWindow(title: meta.label, usedPercent: used, resetsAt: reset, windowSeconds: meta.secs))
+                } else if used > 0.5 {
+                    let tag = shortGroup(groupName)
+                    let title = tag.isEmpty ? meta.label : "\(meta.label) · \(tag)"
+                    secondary.append(LimitWindow(title: title, usedPercent: used, resetsAt: reset, windowSeconds: meta.secs))
+                }
+            }
+        }
+        primary.sort { ($0.windowSeconds ?? 0) < ($1.windowSeconds ?? 0) }
+        secondary.sort { $0.usedPercent > $1.usedPercent }
+        result.windows = primary + secondary
+    }
+
     // MARK: helpers
 
     private static func number(_ v: Any?) -> Double? {

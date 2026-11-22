@@ -362,11 +362,13 @@ private struct MenuBarPane: View {
             SectionTitle("Labels")
             Card {
                 SettingRow(title: "Label shows") { Segmented(options: LabelKind.allCases, selection: $prefs.labelKind) { $0.rawValue } }
-                if prefs.labelKind != .percent {
-                    SettingRow(title: "Over") { Segmented(options: LabelPeriod.allCases, selection: $prefs.labelPeriod) { $0.rawValue } }
-                }
-                SettingRow(title: "Show labels", detail: "High usage shows a label only once that limit passes 70%.") {
-                    Segmented(options: PercentMode.allCases, selection: $prefs.percentMode) { $0.rawValue }
+                if prefs.labelKind != .off {
+                    if prefs.labelKind != .percent {
+                        SettingRow(title: "Over") { Segmented(options: LabelPeriod.allCases, selection: $prefs.labelPeriod) { $0.rawValue } }
+                    }
+                    SettingRow(title: "Show labels", detail: "High usage shows a label only once that limit passes 70%.") {
+                        Segmented(options: PercentMode.allCases, selection: $prefs.percentMode) { $0.rawValue }
+                    }
                 }
             }
 
@@ -508,6 +510,7 @@ private struct PlanRow: View {
         switch service {
         case .cursor: return "Not signed in"
         case .grok: return "Not signed in"
+        case .gemini: return "Not signed in"
         default: return "No usage in 30 days"
         }
     }

@@ -102,7 +102,8 @@ final class UsageStore: ObservableObject {
                 async let g = LimitsFetcher.opencodeGo()
                 async let cu = LimitsFetcher.cursor()
                 async let gr = LimitsFetcher.grok()
-                fetched = await [c, x, g, cu, gr].compactMap { $0 }
+                async let gm = LimitsFetcher.gemini()
+                fetched = await [c, x, g, cu, gr, gm].compactMap { $0 }
             }
             let newLimits = fetched
             await MainActor.run {

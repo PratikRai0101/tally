@@ -5,7 +5,7 @@ import SwiftUI
 enum MenuBarStyle: String, CaseIterable, Identifiable { case columns = "Columns", bars = "Bars"; var id: String { rawValue } }
 enum PercentMode: String, CaseIterable, Identifiable { case never = "Never", high = "High usage", always = "Always"; var id: String { rawValue } }
 /// What the label next to each menu bar meter shows.
-enum LabelKind: String, CaseIterable, Identifiable { case percent = "% used", cost = "Cost", tokens = "Tokens"; var id: String { rawValue } }
+enum LabelKind: String, CaseIterable, Identifiable { case off = "Off", percent = "% used", cost = "Cost", tokens = "Tokens"; var id: String { rawValue } }
 /// Time range for cost / token labels.
 enum LabelPeriod: String, CaseIterable, Identifiable {
     case today = "Today", week = "7d", month = "30d"

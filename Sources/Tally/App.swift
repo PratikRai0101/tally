@@ -157,6 +157,7 @@ enum MenuBarRenderer {
             case .always: break
             }
             switch kind {
+            case .off: return nil
             case .percent: return e.used.map { "\(Int(($0 * 100).rounded()))%" }
             case .cost: return Fmt.moneyShort(e.cost)
             case .tokens: return Fmt.tokens(e.tokens)
@@ -291,7 +292,8 @@ enum Dump {
             async let g = LimitsFetcher.opencodeGo()
             async let cu = LimitsFetcher.cursor()
             async let gr = LimitsFetcher.grok()
-            for l in await [c, x, g, cu, gr].compactMap({ $0 }) {
+            async let gm = LimitsFetcher.gemini()
+            for l in await [c, x, g, cu, gr, gm].compactMap({ $0 }) {
                 print("\n\(l.service.name) [\(l.plan ?? "?")] \(l.source ?? "") \(l.error ?? "") \(l.notes.map { "\($0.0): \($0.1)" }.joined(separator: ", "))")
                 for w in l.windows { print("  \(w.title): \(Int(w.usedPercent))% used, resets in \(Fmt.countdown(to: w.resetsAt))") }
             }

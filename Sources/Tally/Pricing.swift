@@ -73,15 +73,22 @@ final class Pricing {
     private func resolve(_ model: String) -> Rate? {
         var names = [model]
         if let slash = model.lastIndex(of: "/") { names.append(String(model[model.index(after: slash)...])) }
-        // Strip date suffixes like -20251001 and bracketed context tags like [1m].
+        // Strip date suffixes like -20251001, bracketed context tags like [1m],
+        // and Antigravity display names like "Gemini 3.5 Flash (Medium)" → "gemini-3.5-flash".
         for n in names {
-            let cleaned = n.replacingOccurrences(of: #"\[.*\]$"#, with: "", options: .regularExpression)
+            let cleaned = n.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\[.*\]$"#, with: "", options: .regularExpression)
                 .replacingOccurrences(of: #"-\d{8}$"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
             if cleaned != n { names.append(cleaned) }
+            let slug = cleaned.replacingOccurrences(of: #"\s+"#, with: "-", options: .regularExpression)
+            if slug != cleaned { names.append(slug) }
+            let dotDash = slug.replacingOccurrences(of: ".", with: "-")
+            if dotDash != slug { names.append(dotDash) }
         }
         for n in names {
             if let r = table[n] { return r }
-            for prefix in ["anthropic/", "openai/", "anthropic.", "openai.", "xai/", "deepseek/"] {
+            for prefix in ["anthropic/", "openai/", "anthropic.", "openai.", "xai/", "deepseek/", "gemini/", "google/", "vertex_ai/"] {
                 if let r = table[prefix + n] { return r }
             }
         }

@@ -66,9 +66,11 @@ final class UsageScanner {
         run([".codex/sessions", ".codex/archived_sessions"]) { self.parseCodex($0) }
         run([".pi/agent/sessions"]) { self.parsePi($0) }
         run([".grok/sessions"]) { self.parseGrok($0) }
-        fileCache = fileCache.filter { seenPaths.contains($0.key) }
 
         all.append(contentsOf: scanOpenCode(since: since))
+        all.append(contentsOf: scanAntigravity(since: since, seenPaths: &seenPaths))
+        all.append(contentsOf: scanGeminiCLI(since: since, seenPaths: &seenPaths))
+        fileCache = fileCache.filter { seenPaths.contains($0.key) }
 
         // Claude Code writes the same API response into several lines/files; count each once.
         var seen = Set<String>()
@@ -419,6 +421,212 @@ final class UsageScanner {
         return out
     }
 
+    // MARK: - Antigravity (~/.gemini/antigravity*/conversations/*.db & T3 Code ACP)
+
+    private func scanAntigravity(since: Date, seenPaths: inout Set<String>) -> [UsageRecord] {
+        var roots = [
+            home.appendingPathComponent(".gemini/antigravity"),
+            home.appendingPathComponent(".gemini/antigravity-cli"),
+            home.appendingPathComponent(".gemini/antigravity-ide"),
+        ]
+        let t3Root = home.appendingPathComponent(".t3/userdata/providers/antigravity")
+        if let subs = try? FileManager.default.contentsOfDirectory(at: t3Root, includingPropertiesForKeys: nil) {
+            for sub in subs { roots.append(sub.appendingPathComponent("antigravity-acp")) }
+        }
+        var out: [UsageRecord] = []
+        let fm = FileManager.default
+        for root in roots {
+            let convDir = root.appendingPathComponent("conversations")
+            guard let files = try? fm.contentsOfDirectory(at: convDir, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { continue }
+            var cwds: [String: String]?
+            for url in files where url.pathExtension == "db" {
+                guard let v = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                      var mtime = v.contentModificationDate else { continue }
+                var size = v.fileSize ?? 0
+                let wal = URL(fileURLWithPath: url.path + "-wal")
+                if let wv = try? wal.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) {
+                    if let wm = wv.contentModificationDate, wm > mtime { mtime = wm }
+                    size += wv.fileSize ?? 0
+                }
+                guard mtime >= since else { continue }
+                seenPaths.insert(url.path)
+                let cached: CachedFile
+                if let c = fileCache[url.path], c.mtime == mtime, c.size == size {
+                    cached = c
+                } else {
+                    if cwds == nil { cwds = antigravityWorkspaces(root.appendingPathComponent("conversation_summaries.db")) }
+                    let session = url.deletingPathExtension().lastPathComponent
+                    cached = CachedFile(mtime: mtime, size: size,
+                                        parsed: parseAntigravityDB(url, session: session, cwd: cwds?[session] ?? "", fallbackDate: mtime))
+                    fileCache[url.path] = cached
+                }
+                out.append(contentsOf: cached.parsed.records)
+            }
+        }
+        return out
+    }
+
+    private func openSQLiteReadOnly(_ path: String) -> OpaquePointer? {
+        var db: OpaquePointer?
+        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
+            sqlite3_busy_timeout(db, 1000)
+            return db
+        }
+        sqlite3_close(db)
+        db = nil
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        if sqlite3_open_v2("file:\(encoded)?immutable=1", &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK {
+            return db
+        }
+        sqlite3_close(db)
+        return nil
+    }
+
+    private func antigravityWorkspaces(_ url: URL) -> [String: String] {
+        guard FileManager.default.fileExists(atPath: url.path), let db = openSQLiteReadOnly(url.path) else { return [:] }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT conversation_id, workspace_uris FROM conversation_summaries", -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        defer { sqlite3_finalize(stmt) }
+        var map: [String: String] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let idP = sqlite3_column_text(stmt, 0), let uriP = sqlite3_column_text(stmt, 1) else { continue }
+            let id = String(cString: idP), raw = String(cString: uriP)
+            if let arr = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String], let first = arr.first {
+                map[id] = URL(string: first)?.path ?? first.replacingOccurrences(of: "file://", with: "")
+            }
+        }
+        return map
+    }
+
+    private func parseAntigravityDB(_ url: URL, session: String, cwd: String, fallbackDate: Date) -> Parsed {
+        guard let db = openSQLiteReadOnly(url.path) else { return Parsed() }
+        defer { sqlite3_close(db) }
+
+        // 1. Collect per-response timestamps from steps.metadata (field 9 = usage, field 11 = responseId, field 1 = createdAt).
+        var timestamps: [String: Date] = [:]
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT metadata FROM steps WHERE metadata IS NOT NULL", -1, &stmt, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(stmt) }
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let n = Int(sqlite3_column_bytes(stmt, 0))
+                guard n > 0, let p = sqlite3_column_blob(stmt, 0) else { continue }
+                let fields = PB.fields(Data(bytes: p, count: n))
+                var rid: String?
+                var ts: UInt64 = 0
+                for f in fields where f.wire == 2 {
+                    if f.num == 9 {
+                        for u in PB.fields(f.bytes) where u.num == 11 && u.wire == 2 {
+                            rid = String(data: u.bytes, encoding: .utf8)
+                        }
+                    } else if (f.num == 1 || f.num == 8) && ts == 0 {
+                        for t in PB.fields(f.bytes) where t.num == 1 && t.wire == 0 && t.varint > 1_600_000_000 {
+                            ts = t.varint
+                        }
+                    }
+                }
+                if let rid, !rid.isEmpty, ts > 0 { timestamps[rid] = Date(timeIntervalSince1970: Double(ts)) }
+            }
+        }
+
+        // 2. Read each generation from gen_metadata (field 1 → field 4 usage, field 21 model name, field 9→4→1 fallback timestamp).
+        var out: [UsageRecord] = []
+        var gstmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT data FROM gen_metadata WHERE data IS NOT NULL", -1, &gstmt, nil) == SQLITE_OK else { return Parsed() }
+        defer { sqlite3_finalize(gstmt) }
+        while sqlite3_step(gstmt) == SQLITE_ROW {
+            let n = Int(sqlite3_column_bytes(gstmt, 0))
+            guard n > 0, let p = sqlite3_column_blob(gstmt, 0) else { continue }
+            guard let m1 = PB.fields(Data(bytes: p, count: n)).first(where: { $0.num == 1 && $0.wire == 2 }) else { continue }
+            var input = 0, output = 0, cacheRead = 0
+            var responseId: String?
+            var model = "gemini"
+            var genTs: UInt64 = 0
+            for f in PB.fields(m1.bytes) where f.wire == 2 {
+                if f.num == 4 {
+                    for u in PB.fields(f.bytes) {
+                        if u.wire == 0 {
+                            if u.num == 2 { input = Int(u.varint) }
+                            else if u.num == 3 { output = Int(u.varint) }
+                            else if u.num == 5 { cacheRead = Int(u.varint) }
+                        } else if u.wire == 2 && u.num == 11 {
+                            responseId = String(data: u.bytes, encoding: .utf8)
+                        }
+                    }
+                } else if f.num == 21, let s = String(data: f.bytes, encoding: .utf8), !s.isEmpty {
+                    model = s
+                } else if f.num == 9 {
+                    for t9 in PB.fields(f.bytes) where t9.num == 4 && t9.wire == 2 {
+                        for t4 in PB.fields(t9.bytes) where t4.num == 1 && t4.wire == 0 && t4.varint > 1_600_000_000 {
+                            genTs = t4.varint
+                        }
+                    }
+                }
+            }
+            if input + output + cacheRead == 0 { continue }
+            let date = responseId.flatMap { timestamps[$0] } ?? (genTs > 0 ? Date(timeIntervalSince1970: Double(genTs)) : fallbackDate)
+            var cost = 0.0
+            if let r = pricing.rate(for: model) {
+                cost = Double(input) * r.input + Double(output) * r.output + Double(cacheRead) * r.cacheRead
+            }
+            out.append(UsageRecord(date: date, tool: .antigravity, service: .gemini, model: model,
+                                   input: input, cacheRead: cacheRead, cacheWrite: 0, output: output,
+                                   cost: cost, session: session, dedupKey: responseId.map { "agy:\($0)" }, cwd: cwd))
+        }
+        return Parsed(records: out)
+    }
+
+    // MARK: - Gemini CLI (~/.gemini/tmp/<project>/chats/session-*.json)
+
+    private func scanGeminiCLI(since: Date, seenPaths: inout Set<String>) -> [UsageRecord] {
+        let root = home.appendingPathComponent(".gemini/tmp")
+        guard let e = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var out: [UsageRecord] = []
+        for case let url as URL in e where url.pathExtension == "json" && url.lastPathComponent.hasPrefix("session-") {
+            guard let v = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]),
+                  v.isRegularFile == true, let mtime = v.contentModificationDate, mtime >= since else { continue }
+            let size = v.fileSize ?? 0
+            seenPaths.insert(url.path)
+            let cached: CachedFile
+            if let c = fileCache[url.path], c.mtime == mtime, c.size == size {
+                cached = c
+            } else {
+                cached = CachedFile(mtime: mtime, size: size, parsed: parseGeminiCLI(url))
+                fileCache[url.path] = cached
+            }
+            out.append(contentsOf: cached.parsed.records)
+        }
+        return out
+    }
+
+    private func parseGeminiCLI(_ url: URL) -> Parsed {
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let msgs = obj["messages"] as? [[String: Any]] else { return Parsed() }
+        let session = (obj["sessionId"] as? String) ?? url.deletingPathExtension().lastPathComponent
+        var out: [UsageRecord] = []
+        for m in msgs where (m["type"] as? String) == "gemini" {
+            guard let t = m["tokens"] as? [String: Any], let date = parseISO(m["timestamp"]) else { continue }
+            let cached = int(t["cached"])
+            let input = max(0, int(t["input"]) - cached)
+            let output = int(t["output"]) + int(t["thoughts"])
+            if input + output + cached == 0 { continue }
+            let model = (m["model"] as? String) ?? "gemini"
+            var cost = 0.0
+            if let r = pricing.rate(for: model) {
+                cost = Double(input) * r.input + Double(output) * r.output + Double(cached) * r.cacheRead
+            }
+            out.append(UsageRecord(date: date, tool: .geminiCli, service: .gemini, model: model,
+                                   input: input, cacheRead: cached, cacheWrite: 0, output: output,
+                                   cost: cost, session: session, dedupKey: (m["id"] as? String).map { "gem:\($0)" }))
+        }
+        return Parsed(records: out)
+    }
+
     // MARK: - Helpers
 
     private let isoFrac: ISO8601DateFormatter = {
@@ -474,5 +682,53 @@ func windowTitle(seconds: Double) -> String {
     case ..<(86_400 * 2): return "Daily"
     case ..<(86_400 * 8): return "Weekly"
     default: return "Monthly"
+    }
+}
+
+/// Minimal zero-dependency protobuf wire-format decoder for Antigravity's local SQLite blobs.
+private enum PB {
+    struct Field { let num: Int; let wire: UInt8; let varint: UInt64; let bytes: Data }
+
+    static func fields(_ data: Data) -> [Field] {
+        var out: [Field] = []
+        let n = data.count
+        data.withUnsafeBytes { raw in
+            guard let p = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            var i = 0
+            func varint() -> UInt64? {
+                var val: UInt64 = 0, shift: UInt64 = 0
+                while i < n && shift < 64 {
+                    let b = p[i]; i += 1
+                    val |= UInt64(b & 0x7F) << shift
+                    if b & 0x80 == 0 { return val }
+                    shift += 7
+                }
+                return nil
+            }
+            while i < n {
+                guard let tag = varint() else { break }
+                let num = Int(tag >> 3), wire = UInt8(tag & 7)
+                if num == 0 { break }
+                switch wire {
+                case 0:
+                    guard let v = varint() else { return }
+                    out.append(Field(num: num, wire: 0, varint: v, bytes: Data()))
+                case 1:
+                    guard i + 8 <= n else { return }
+                    i += 8
+                case 2:
+                    guard let ln = varint(), ln <= UInt64(n - i) else { return }
+                    let len = Int(ln)
+                    out.append(Field(num: num, wire: 2, varint: 0, bytes: Data(bytes: p + i, count: len)))
+                    i += len
+                case 5:
+                    guard i + 4 <= n else { return }
+                    i += 4
+                default:
+                    return
+                }
+            }
+        }
+        return out
     }
 }

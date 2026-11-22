@@ -63,12 +63,16 @@ function rater(table) {
     const slash = model.lastIndexOf("/");
     if (slash >= 0) names.push(model.slice(slash + 1));
     for (const n of [...names]) {
-      const c = n.replace(/\[.*\]$/, "").replace(/-\d{8}$/, "");
+      const c = n.replace(/\s*\([^)]*\)\s*$/, "").replace(/\[.*\]$/, "").replace(/-\d{8}$/, "").trim();
       if (c !== n) names.push(c);
+      const slug = c.replace(/\s+/g, "-");
+      if (slug !== c) names.push(slug);
+      const dd = slug.replace(/\./g, "-");
+      if (dd !== slug) names.push(dd);
     }
     for (const n of names) {
       if (table.has(n)) return table.get(n);
-      for (const p of ["anthropic/", "openai/", "anthropic.", "openai.", "xai/", "deepseek/"]) if (table.has(p + n)) return table.get(p + n);
+      for (const p of ["anthropic/", "openai/", "anthropic.", "openai.", "xai/", "deepseek/", "gemini/", "google/", "vertex_ai/"]) if (table.has(p + n)) return table.get(p + n);
     }
     const base = names[names.length - 1];
     let best = null;
@@ -128,6 +132,7 @@ function serviceFrom(provider) {
     case "anthropic": case "claude": return "claude";
     case "openai-codex": case "codex": case "chatgpt": return "codex";
     case "xai": case "grok": return "grok";
+    case "google": case "gemini": case "google-gemini": case "antigravity": return "gemini";
     case "cursor": return "cursor";
     case "opencode-go": return "opencodeGo";
     case "opencode": case "opencode-zen": return "opencodeZen";
@@ -285,6 +290,138 @@ function scanOpenCode(since, out) {
   } catch {}
 }
 
+function pbFields(buf) {
+  const out = [];
+  let i = 0;
+  const n = buf.length;
+  const varint = () => {
+    let val = 0n, shift = 0n;
+    while (i < n && shift < 64n) {
+      const b = buf[i++];
+      val |= BigInt(b & 0x7f) << shift;
+      if ((b & 0x80) === 0) return Number(val);
+      shift += 7n;
+    }
+    return null;
+  };
+  while (i < n) {
+    const tag = varint();
+    if (tag == null) break;
+    const num = tag >>> 3, wire = tag & 7;
+    if (!num) break;
+    if (wire === 0) { const v = varint(); if (v == null) break; out.push({ num, wire, v }); }
+    else if (wire === 1) { if (i + 8 > n) break; i += 8; }
+    else if (wire === 2) { const ln = varint(); if (ln == null || i + ln > n) break; out.push({ num, wire, b: buf.subarray(i, i + ln) }); i += ln; }
+    else if (wire === 5) { if (i + 4 > n) break; i += 4; }
+    else break;
+  }
+  return out;
+}
+
+function scanAntigravity(since, rate, out) {
+  let sqlite;
+  const warn = process.emitWarning;
+  process.emitWarning = () => {};
+  try { sqlite = require("node:sqlite"); } catch { return; } finally { process.emitWarning = warn; }
+  const roots = [
+    path.join(HOME, ".gemini", "antigravity"),
+    path.join(HOME, ".gemini", "antigravity-cli"),
+    path.join(HOME, ".gemini", "antigravity-ide"),
+  ];
+  try {
+    const t3 = path.join(HOME, ".t3", "userdata", "providers", "antigravity");
+    for (const e of fs.readdirSync(t3, { withFileTypes: true })) if (e.isDirectory()) roots.push(path.join(t3, e.name, "antigravity-acp"));
+  } catch {}
+  for (const root of roots) {
+    const convDir = path.join(root, "conversations");
+    let ents;
+    try { ents = fs.readdirSync(convDir, { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      if (!e.isFile() || !e.name.endsWith(".db")) continue;
+      const file = path.join(convDir, e.name);
+      let mtime = 0;
+      try { mtime = fs.statSync(file).mtimeMs; } catch { continue; }
+      try { mtime = Math.max(mtime, fs.statSync(file + "-wal").mtimeMs); } catch {}
+      if (mtime < since) continue;
+      const session = path.basename(file, ".db");
+      let d;
+      try { d = new sqlite.DatabaseSync(file, { readOnly: true }); } catch {
+        try { d = new sqlite.DatabaseSync(`file:${encodeURI(file)}?immutable=1`, { readOnly: true }); } catch { continue; }
+      }
+      try {
+        const tsMap = new Map();
+        try {
+          for (const row of d.prepare("SELECT metadata FROM steps WHERE metadata IS NOT NULL").all()) {
+            const fields = pbFields(Buffer.from(row.metadata));
+            let rid = null, ts = 0;
+            for (const f of fields) {
+              if (f.wire !== 2) continue;
+              if (f.num === 9) { for (const u of pbFields(f.b)) if (u.num === 11 && u.wire === 2) rid = u.b.toString("utf8"); }
+              else if ((f.num === 1 || f.num === 8) && !ts) { for (const t of pbFields(f.b)) if (t.num === 1 && t.wire === 0 && t.v > 1.6e9) ts = t.v; }
+            }
+            if (rid && ts) tsMap.set(rid, ts * 1000);
+          }
+        } catch {}
+        for (const row of d.prepare("SELECT data FROM gen_metadata WHERE data IS NOT NULL").all()) {
+          const m1 = pbFields(Buffer.from(row.data)).find((f) => f.num === 1 && f.wire === 2);
+          if (!m1) continue;
+          let input = 0, output = 0, read = 0, rid = null, model = "gemini", genTs = 0;
+          for (const f of pbFields(m1.b)) {
+            if (f.wire !== 2) continue;
+            if (f.num === 4) {
+              for (const u of pbFields(f.b)) {
+                if (u.wire === 0) { if (u.num === 2) input = u.v; else if (u.num === 3) output = u.v; else if (u.num === 5) read = u.v; }
+                else if (u.wire === 2 && u.num === 11) rid = u.b.toString("utf8");
+              }
+            } else if (f.num === 21) { const s = f.b.toString("utf8"); if (s) model = s; }
+            else if (f.num === 9) {
+              for (const t9 of pbFields(f.b)) if (t9.num === 4 && t9.wire === 2)
+                for (const t4 of pbFields(t9.b)) if (t4.num === 1 && t4.wire === 0 && t4.v > 1.6e9) genTs = t4.v * 1000;
+            }
+          }
+          if (input + output + read === 0) continue;
+          const t = (rid && tsMap.get(rid)) || genTs || mtime;
+          const r = rate(model);
+          const cost = r ? input * r.input + output * r.output + read * r.cacheRead : 0;
+          out.push({ t, tool: "antigravity", svc: "gemini", model, tokens: input + output + read, cost, session, key: rid ? `agy:${rid}` : undefined });
+        }
+      } catch {} finally { try { d.close(); } catch {} }
+    }
+  }
+}
+
+function scanGeminiCLI(since, rate, out) {
+  const root = path.join(HOME, ".gemini", "tmp");
+  const walk = (dir) => {
+    let ents;
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.name.startsWith(".")) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && e.name.startsWith("session-") && e.name.endsWith(".json")) {
+        try { if (fs.statSync(p).mtimeMs < since) continue; } catch { continue; }
+        const o = jsonFile(p);
+        if (!o || !Array.isArray(o.messages)) continue;
+        const session = o.sessionId || path.basename(p, ".json");
+        for (const m of o.messages) {
+          if (!m || m.type !== "gemini" || !m.tokens) continue;
+          const t = Date.parse(m.timestamp);
+          if (!t) continue;
+          const cached = int(m.tokens.cached), input = Math.max(0, int(m.tokens.input) - cached);
+          const output = int(m.tokens.output) + int(m.tokens.thoughts);
+          if (input + output + cached === 0) continue;
+          const model = m.model || "gemini";
+          const r = rate(model);
+          const cost = r ? input * r.input + output * r.output + cached * r.cacheRead : 0;
+          out.push({ t, tool: "gemini-cli", svc: "gemini", model, tokens: input + output + cached, cost, session, key: m.id ? `gem:${m.id}` : undefined });
+        }
+      }
+    }
+  };
+  walk(root);
+}
+
 async function scan() {
   const since = Date.now() - PERIODS["30d"] * 1000;
   const rate = rater(await loadPrices());
@@ -295,6 +432,8 @@ async function scan() {
   for (const f of roots([".pi/agent/sessions"])) parsePi(f, rate, recs, hits);
   for (const f of roots([".grok/sessions"])) parseGrok(f, rate, recs, hits);
   scanOpenCode(since, recs);
+  scanAntigravity(since, rate, recs);
+  scanGeminiCLI(since, rate, recs);
   const seen = new Set();
   return {
     recs: recs.filter((r) => r.t >= since && (!r.key || (!seen.has(r.key) && seen.add(r.key)))),
@@ -404,10 +543,10 @@ function opener(file) {
 }
 
 async function wrapped({ say, flags, version }) {
-  say("Reading your Claude Code, Codex, Pi, OpenCode and Grok logs (last 30 days)…");
+  say("Reading your Claude Code, Codex, Pi, OpenCode, Grok and Gemini/Antigravity logs (last 30 days)…");
   const scanned = await scan(), recs = scanned.recs;
   if (!recs.length) {
-    say("No usage found. Tally reads ~/.claude/projects, ~/.codex/sessions, ~/.pi/agent/sessions, ~/.grok/sessions and OpenCode's database.");
+    say("No usage found. Tally reads ~/.claude/projects, ~/.codex/sessions, ~/.pi/agent/sessions, ~/.grok/sessions, ~/.gemini and OpenCode's database.");
     return;
   }
   const now = Date.now();
