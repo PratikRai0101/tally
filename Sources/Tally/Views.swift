@@ -254,8 +254,8 @@ struct ServiceCard: View {
                     Text(lim?.plan ?? service.defaultPlan).font(.system(size: 11.5)).foregroundStyle(Theme.dim)
                 }
                 Spacer()
-                if let src = lim?.source, src != "live" {
-                    Text(src).font(.system(size: 10.5)).foregroundStyle(Theme.faint)
+                if let lim, let f = Freshness(lim) {
+                    Text(f.label).font(.system(size: 10.5)).foregroundStyle(f.stale ? Theme.warn : Theme.faint).help(f.help)
                 }
             }
 
@@ -315,10 +315,21 @@ struct ServiceCard: View {
                     }
                     .font(.system(size: 11.5))
                 }
+                if let reason = lim.staleReason, !lim.windows.isEmpty {
+                    let why = reason.hasSuffix(".") ? reason : reason + "."
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "clock.badge.exclamationmark").foregroundStyle(Theme.warn)
+                        Text(lim.source == "logs" ? "\(why) Showing an estimate from this Mac's logs, so other devices aren't counted."
+                                                  : "\(why) Showing the last good reading.")
+                            .foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.system(size: 11))
+                }
                 ForEach(lim.windows) { w in
                     LimitRow(window: w, color: prefs.colorBars ? Theme.severity(w.usedPercent) : service.color,
                              percentColor: prefs.colorBars ? Theme.severity(w.usedPercent) : Theme.dim,
                              forecast: store.forecast(service, w))
+                        .opacity(Freshness(lim)?.stale == true ? 0.55 : 1)
                 }
                 valueRow(lim)
                 ForEach(lim.notes, id: \.0) { label, value in
@@ -368,7 +379,8 @@ struct LimitRow: View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
                 Text(window.title).font(.system(size: 12.5))
-                if let pace = window.pace, window.usedPercent / 100 > pace + 0.02 {
+                // Wait until a tenth of the window has passed: a few minutes in, any use looks "ahead".
+                if let pace = window.pace, pace > 0.1, window.usedPercent / 100 > pace + 0.02 {
                     Text("ahead of pace").font(.system(size: 10)).foregroundStyle(Theme.bad.opacity(0.9))
                 }
                 Spacer()
@@ -390,9 +402,16 @@ struct LimitRow: View {
                         Text("Limit reached. Back in \(Fmt.countdown(to: window.resetsAt)).").foregroundStyle(Theme.bad)
                     } else if let secs = f.runsOutIn, f.beforeReset {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.bad)
-                        Text("Runs out in ~\(Fmt.duration(secs)) at this pace").foregroundStyle(Theme.bad)
+                        Text("At this pace you'll hit the limit \(Forecast.when(secs))\(f.early.map { ", \(Fmt.duration($0)) before reset" } ?? "")")
+                            .foregroundStyle(Theme.bad).lineLimit(1).minimumScaleFactor(0.85)
                     } else if f.tooEarly {
                         Text("Too early in this window to forecast").foregroundStyle(Theme.faint)
+                    } else if let end = f.atReset {
+                        if end >= 90 {
+                            Text("Cutting it close: about \(min(99, Int(end.rounded())))% used by reset").foregroundStyle(Theme.warn)
+                        } else {
+                            Text("On track: about \(max(1, Int(end.rounded())))% used by reset").foregroundStyle(Theme.faint)
+                        }
                     } else if f.runsOutIn != nil {
                         Text("Lasts until reset at this pace").foregroundStyle(Theme.faint)
                     } else {
@@ -400,10 +419,13 @@ struct LimitRow: View {
                     }
                     Spacer()
                     if f.ratePerHour > 0 {
-                        Text(String(format: "%.1f%%/h", f.ratePerHour)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.faint)
+                        Text(String(format: f.average ? "avg %.1f%%/h" : "%.1f%%/h", f.ratePerHour))
+                            .font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.faint)
+                            .help(f.average ? "Average use per hour since this window opened" : "Use per hour over the last hour")
                     }
                 }
                 .font(.system(size: 10.5))
+                .padding(.top, 3)
             }
         }
         .padding(.top, 4)
@@ -600,5 +622,32 @@ struct LiveDot: View {
             .opacity(on ? 1 : 0.35)
             .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: on)
             .onAppear { on = true }
+    }
+}
+
+/// How fresh a plan's numbers are: "live · 2m ago", "last checked 25m ago", "estimate from logs · 47m ago".
+struct Freshness {
+    let label: String
+    let help: String
+    /// Older than 10 minutes, or not from a live check: dim the meters so a calm green bar can't mislead.
+    let stale: Bool
+
+    init?(_ lim: ServiceLimits) {
+        guard let at = lim.checkedAt, !lim.windows.isEmpty else { return nil }
+        let age = Date().timeIntervalSince(at)
+        let when = Fmt.ago(at)
+        if lim.source == "logs" {
+            label = "estimate from logs · \(when)"
+            help = "The live usage check failed, so these numbers come from the agent's own logs on this Mac, last written \(when). Usage on other devices isn't included."
+            stale = true
+        } else if lim.staleReason != nil || age > 10 * 60 {
+            label = "last checked \(when)"
+            help = "The latest live check failed. These are the last numbers that came back, \(when)."
+            stale = true
+        } else {
+            label = "live · \(when)"
+            help = "Read from the provider's usage endpoint \(when). Tally checks every 3 minutes."
+            stale = false
+        }
     }
 }

@@ -8,13 +8,23 @@ enum LimitsFetcher {
 
     static func claude() async -> ServiceLimits {
         var result = ServiceLimits(service: .claude, windows: [])
-        guard let raw = shell("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"]),
+        // The Keychain read can fail for a moment (locked after sleep, or while Claude Code rewrites the item
+        // when it renews its token), so try twice before saying there's no login.
+        var read = run("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        if read.out == nil, read.status != 44 {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            read = run("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        }
+        guard let raw = read.out,
               let obj = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
               let oauth = obj["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String else {
-            result.error = "Sign in with Claude Code to see limits"
+            // 44 = errSecItemNotFound: there really is no Claude Code login on this Mac.
+            result.error = read.status == 44 ? "Sign in with Claude Code to see limits"
+                                             : "Couldn't read Claude Code's login from the Keychain"
             return result
         }
+        let expires = number(oauth["expiresAt"]).map { Date(timeIntervalSince1970: $0 / 1000) }
         if let sub = oauth["subscriptionType"] as? String { result.plan = "Claude \(sub.capitalized)" }
 
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
@@ -28,7 +38,13 @@ enum LimitsFetcher {
         }
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            result.error = status == 401 ? "Login expired. Open Claude Code once to refresh it." : "Usage unavailable (\(status))"
+            if status == 401 {
+                // Claude Code renews its own token when you use it; Tally never touches it.
+                result.error = expires.map { $0 < Date() ? "Claude Code's sign-in expired \(Fmt.ago($0)). It renews the next time you use Claude Code." : nil }
+                    ?? "Claude Code's sign-in expired. It renews the next time you use Claude Code."
+            } else {
+                result.error = "Anthropic usage unavailable (\(status))"
+            }
             return result
         }
         let windows: [(String, String, Double)] = [
@@ -47,6 +63,7 @@ enum LimitsFetcher {
             result.notes.append(("Extra usage", "\(Fmt.money(used / 100)) / \(Fmt.money(limit / 100))"))
         }
         result.source = "live"
+        result.checkedAt = Date()
         return result
     }
 
@@ -58,7 +75,9 @@ enum LimitsFetcher {
             if let fallback {
                 result.windows = fallback.windows
                 result.plan = fallback.plan.map { "ChatGPT \($0.capitalized)" }
-                result.source = "from logs · \(Fmt.ago(fallback.at))"
+                result.source = "logs"
+                result.checkedAt = fallback.at
+                result.staleReason = why
             } else {
                 result.error = why
             }
@@ -76,10 +95,12 @@ enum LimitsFetcher {
         if let acct = tokens["account_id"] as? String { req.setValue(acct, forHTTPHeaderField: "ChatGPT-Account-Id") }
         req.setValue("codex-cli", forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 15
-        guard let (body, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-            return useFallback("Codex login expired. Run `codex login`.")
+        guard let (body, resp) = try? await URLSession.shared.data(for: req) else {
+            return useFallback("Couldn't reach ChatGPT.")
+        }
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return useFallback(status == 401 ? "Codex login expired. Run `codex login`." : "ChatGPT usage unavailable (\(status)).")
         }
         if let plan = json["plan_type"] as? String { result.plan = "ChatGPT \(plan.capitalized)" }
         if let rl = json["rate_limit"] as? [String: Any] {
@@ -101,6 +122,7 @@ enum LimitsFetcher {
             result.notes.append(("Reset credits", "\(Int(n))"))
         }
         result.source = "live"
+        result.checkedAt = Date()
         return result
     }
 
@@ -138,7 +160,7 @@ enum LimitsFetcher {
                 result.windows.append(LimitWindow(title: title, usedPercent: number(w["percent"]) ?? 0,
                                                   resetsAt: parseDate(w["resetsAt"]), windowSeconds: secs))
             }
-            result.source = "live"
+            result.source = "live"; result.checkedAt = Date()
             return result
         }
         result.error = lastStatus == 401 ? "OpenCode Go key expired. Make a new one in OpenCode Console." : "Couldn't read OpenCode Go usage"
@@ -166,17 +188,17 @@ enum LimitsFetcher {
         return ISO8601DateFormatter().date(from: s)
     }
 
-    private static func shell(_ path: String, _ args: [String]) -> String? {
+    private static func run(_ path: String, _ args: [String]) -> (out: String?, status: Int32) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
         let out = Pipe()
         p.standardOutput = out
         p.standardError = Pipe()
-        do { try p.run() } catch { return nil }
+        do { try p.run() } catch { return (nil, -1) }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        guard p.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard p.terminationStatus == 0 else { return (nil, p.terminationStatus) }
+        return (String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), 0)
     }
 }

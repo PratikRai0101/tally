@@ -61,6 +61,24 @@ struct Forecast {
     let ratePerHour: Double
     /// Being used, but not enough data yet to project.
     var tooEarly = false
+    /// The rate is the average since the window opened, not the last hour.
+    var average = false
+    /// Projected percent used when the window resets.
+    var atReset: Double?
+    /// How long before the reset the limit would be hit.
+    var early: TimeInterval?
+
+    /// "4:35 pm" today, "Mon 4 pm" later in the week.
+    static func when(_ secs: TimeInterval, now: Date = Date()) -> String {
+        var d = now.addingTimeInterval(secs)
+        let f = DateFormatter()
+        f.amSymbol = "am"; f.pmSymbol = "pm"
+        let sameDay = Calendar.current.isDate(d, inSameDayAs: now)
+        // Days away, minutes are false precision: round to the hour.
+        if !sameDay { d = Date(timeIntervalSinceReferenceDate: (d.timeIntervalSinceReferenceDate / 3600).rounded() * 3600) }
+        f.dateFormat = sameDay ? "h:mm a" : "EEE h a"
+        return f.string(from: d)
+    }
 }
 
 /// Keeps a short history of limit readings so the burn rate reflects recent use, not the whole window.
@@ -87,9 +105,13 @@ final class LimitHistory {
     func forecast(_ s: Service, _ w: LimitWindow, now: Date = Date()) -> Forecast? {
         guard w.usedPercent < 100 else { return Forecast(runsOutIn: 0, beforeReset: true, ratePerHour: 0) }
         var rate: Double? // percent per second
-        // Recent rate: last hour of readings, if we have at least 15 minutes of them and usage moved.
+        var average = false
+        // Session-length windows: the last hour of readings, if we have 15 minutes of them and usage moved.
+        // Weekly windows skip this: an hour of heavy use says nothing about a whole week, because nobody
+        // codes around the clock. They use the average since the window opened instead.
+        let long = (w.windowSeconds ?? 0) > 86_400
         let recent = (samples[key(s, w)] ?? []).filter { now.timeIntervalSince($0.0) <= 3600 }
-        if let first = recent.first, let last = recent.last, last.0.timeIntervalSince(first.0) >= 15 * 60 {
+        if !long, let first = recent.first, let last = recent.last, last.0.timeIntervalSince(first.0) >= 15 * 60 {
             let r = (last.1 - first.1) / last.0.timeIntervalSince(first.0)
             if r > 0 { rate = r }
         }
@@ -97,14 +119,18 @@ final class LimitHistory {
         if rate == nil, let reset = w.resetsAt, let len = w.windowSeconds {
             let elapsed = len - reset.timeIntervalSince(now)
             // Too early in a window the average swings wildly, so wait for 30 minutes (or 3% of a long window).
-            if elapsed > max(30 * 60, len * 0.03), w.usedPercent > 0 { rate = w.usedPercent / elapsed }
+            if elapsed > max(30 * 60, len * 0.03), w.usedPercent > 0 { rate = w.usedPercent / elapsed; average = true }
         }
         guard let rate, rate > 0 else {
             return Forecast(runsOutIn: nil, beforeReset: false, ratePerHour: 0, tooEarly: w.usedPercent > 0)
         }
         let secs = (100 - w.usedPercent) / rate
-        let beforeReset = w.resetsAt.map { secs < $0.timeIntervalSince(now) } ?? true
-        return Forecast(runsOutIn: secs, beforeReset: beforeReset, ratePerHour: rate * 3600)
+        let toReset = w.resetsAt?.timeIntervalSince(now)
+        let beforeReset = toReset.map { secs < $0 } ?? true
+        var f = Forecast(runsOutIn: secs, beforeReset: beforeReset, ratePerHour: rate * 3600)
+        f.average = average
+        if let toReset { f.atReset = min(100, w.usedPercent + rate * toReset); f.early = beforeReset ? toReset - secs : nil }
+        return f
     }
 }
 
@@ -133,16 +159,23 @@ enum PlanPricing {
 // MARK: - Alerts
 
 @MainActor
-final class Notifier {
+final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
     private let d = UserDefaults.standard
     private var authorized = false
 
     func requestPermission() {
         guard Bundle.main.bundleIdentifier != nil else { return }
+        UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { ok, _ in
             Task { @MainActor in self.authorized = ok }
         }
+    }
+
+    /// Without this, macOS hides Tally's banners whenever Tally is the active app, i.e. while the panel is open.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
     }
 
     /// Fires each alert at most once per window cycle (keyed on the reset time).
@@ -156,28 +189,37 @@ final class Notifier {
 
     func evaluate(_ limits: [Service: ServiceLimits], history: LimitHistory, prefs: Prefs) {
         // The bare binary (--dump, --snapshot) has no bundle, and UserNotifications crashes without one.
-        guard prefs.alertsEnabled, Bundle.main.bundleIdentifier != nil else { return }
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let hook = Hook.isInstalled
+        guard prefs.alertsEnabled || hook else { return }
         for (service, lim) in limits {
             for w in lim.windows {
                 let cycle = Int((w.resetsAt?.timeIntervalSince1970 ?? 0) / 600)
                 let base = "\(service.rawValue)|\(w.title)|\(cycle)"
-                for t in [80.0, 95.0] where prefs.thresholds.contains(Int(t)) && w.usedPercent >= t {
-                    once("\(base)|\(Int(t))") {
-                        post("\(service.name) \(w.title.lowercased()) at \(Int(w.usedPercent))%",
-                             "Resets in \(Fmt.countdown(to: w.resetsAt)).")
+                // The hook gets every event; notifications only the ones switched on in Settings.
+                func fire(_ kind: String, notify: Bool, threshold: Int? = nil, _ title: String, _ body: String) {
+                    guard notify || hook else { return }
+                    once("\(base)|\(kind)") {
+                        if notify { post(title, body) }
+                        if hook {
+                            Hook.run(event: threshold == nil ? kind : "threshold", service: service, window: w,
+                                     threshold: threshold, title: title, body: body)
+                        }
                     }
                 }
-                if prefs.alertOnReset, let prev = history.previous(service, w), prev >= 50, w.usedPercent < prev - 30 {
-                    once("\(base)|reset") {
-                        post("\(service.name) \(w.title.lowercased()) has reset", "You're back to \(Int(w.leftPercent))% left.")
-                    }
+                for t in [80, 95] where w.usedPercent >= Double(t) {
+                    fire("\(t)", notify: prefs.alertsEnabled && prefs.thresholds.contains(t), threshold: t,
+                         "\(service.name) \(w.title.lowercased()) at \(Int(w.usedPercent))%",
+                         "Resets in \(Fmt.countdown(to: w.resetsAt)).")
                 }
-                if prefs.alertOnPace, w.usedPercent >= 30, let f = history.forecast(service, w),
-                   f.beforeReset, let secs = f.runsOutIn, secs > 0 {
-                    once("\(base)|pace") {
-                        post("\(service.name) \(w.title.lowercased()) is on pace to run out",
-                             "At this rate it runs out in \(Fmt.duration(secs)), before it resets in \(Fmt.countdown(to: w.resetsAt)).")
-                    }
+                if let prev = history.previous(service, w), prev >= 50, w.usedPercent < prev - 30 {
+                    fire("reset", notify: prefs.alertsEnabled && prefs.alertOnReset,
+                         "\(service.name) \(w.title.lowercased()) has reset", "You're back to \(Int(w.leftPercent))% left.")
+                }
+                if w.usedPercent >= 30, let f = history.forecast(service, w), f.beforeReset, let secs = f.runsOutIn, secs > 0 {
+                    fire("pace", notify: prefs.alertsEnabled && prefs.alertOnPace,
+                         "\(service.name) \(w.title.lowercased()) limit: on pace to hit it",
+                         "At this pace you'll hit it around \(Forecast.when(secs)), \(Fmt.duration(f.early ?? 0)) before it resets. Good moment to wrap up.")
                 }
             }
         }
@@ -189,6 +231,77 @@ final class Notifier {
         c.body = body
         c.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+    }
+}
+
+// MARK: - Before-cutoff hook
+
+/// Runs ~/.config/tally/hook (if you made one) when an alert fires, so a script can save work,
+/// stop an agent or ping a chat before a limit cuts you off. Tally never creates or downloads this file.
+enum Hook {
+    static var url: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/tally/hook")
+    }
+
+    /// Only an executable file owned by you that nobody else can write to.
+    static var isInstalled: Bool {
+        let path = url.path
+        guard FileManager.default.isExecutableFile(atPath: path),
+              let a = try? FileManager.default.attributesOfItem(atPath: path),
+              (a[.type] as? FileAttributeType) == .typeRegular,
+              (a[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+              let perms = (a[.posixPermissions] as? NSNumber)?.intValue, perms & 0o022 == 0 else { return false }
+        return true
+    }
+
+    static func run(event: String, service: Service, window: LimitWindow, threshold: Int?, title: String, body: String) {
+        var env = ProcessInfo.processInfo.environment
+        env["TALLY_EVENT"] = event                          // threshold | pace | reset | test
+        env["TALLY_SERVICE"] = service.rawValue             // claude | codex | opencodeGo …
+        env["TALLY_SERVICE_NAME"] = service.name
+        env["TALLY_WINDOW"] = window.title.lowercased()     // session | weekly | monthly
+        env["TALLY_PERCENT"] = String(Int(window.usedPercent.rounded()))
+        if let threshold { env["TALLY_THRESHOLD"] = String(threshold) }
+        if let r = window.resetsAt {
+            env["TALLY_RESETS_AT"] = ISO8601DateFormatter().string(from: r)
+            env["TALLY_RESETS_IN"] = String(max(0, Int(r.timeIntervalSinceNow)))
+        }
+        env["TALLY_TITLE"] = title
+        env["TALLY_MESSAGE"] = body
+        launch(env)
+    }
+
+    /// `Tally --test-hook`: runs the hook once with a sample event so you can check your script.
+    static func test() -> Int32 {
+        guard isInstalled else {
+            print("No usable hook at \(url.path). It must be an executable file you own that only you can write (chmod 755).")
+            return 1
+        }
+        var env = ProcessInfo.processInfo.environment
+        for (k, v) in ["TALLY_EVENT": "test", "TALLY_SERVICE": "claude", "TALLY_SERVICE_NAME": "Claude", "TALLY_WINDOW": "session",
+                       "TALLY_PERCENT": "80", "TALLY_THRESHOLD": "80", "TALLY_RESETS_IN": "3600",
+                       "TALLY_RESETS_AT": ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600)),
+                       "TALLY_TITLE": "Claude session at 80%", "TALLY_MESSAGE": "Resets in 1h. (test)"] { env[k] = v }
+        let p = Process()
+        p.executableURL = url
+        p.environment = env
+        do { try p.run() } catch { print("Couldn't run \(url.path): \(error.localizedDescription)"); return 1 }
+        p.waitUntilExit()
+        print("hook exited with status \(p.terminationStatus)")
+        return p.terminationStatus
+    }
+
+    private static func launch(_ env: [String: String]) {
+        let p = Process()
+        p.executableURL = url
+        p.environment = env
+        p.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return }
+        // A hook gets a minute; a stuck script shouldn't linger forever.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 60) { if p.isRunning { p.terminate() } }
     }
 }
 

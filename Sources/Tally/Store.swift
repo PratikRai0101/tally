@@ -109,9 +109,11 @@ final class UsageStore: ObservableObject {
                 self.nearMisses = result.nearMisses
                 self.usedServices = Set(result.records.map(\.service))
                 if let newLimits {
-                    self.limits = Dictionary(uniqueKeysWithValues: newLimits.map { ($0.service, $0) })
+                    let merged = newLimits.map { self.keepLastGood($0) }
+                    self.limits = Dictionary(uniqueKeysWithValues: merged.map { ($0.service, $0) })
                     self.lastLimitsFetch = Date()
-                    for l in newLimits { for w in l.windows { self.history.record(l.service, w) } }
+                    // Only fresh live readings feed the pace history; repeats of old numbers would flatten it.
+                    for l in newLimits where l.source == "live" { for w in l.windows { self.history.record(l.service, w) } }
                     Notifier.shared.evaluate(self.limits, history: self.history, prefs: Prefs.shared)
                 }
                 self.isLoading = false
@@ -119,6 +121,20 @@ final class UsageStore: ObservableObject {
                 self.lastUpdated = Date()
             }
         }
+    }
+
+    /// A failed check shouldn't blank a meter that was fine a minute ago (the Keychain is briefly locked,
+    /// Claude Code is renewing its token, the network blipped). Keep the last good live reading for up to
+    /// 12 hours, marked with its age and why the new check failed. Windows that have reset since are dropped.
+    private func keepLastGood(_ new: ServiceLimits) -> ServiceLimits {
+        guard new.source != "live", let old = limits[new.service], !old.windows.isEmpty,
+              let at = old.checkedAt, Date().timeIntervalSince(at) < 12 * 3600,
+              new.windows.isEmpty || (new.checkedAt ?? .distantPast) < at else { return new }
+        var keep = old
+        keep.error = nil
+        keep.staleReason = new.error ?? new.staleReason ?? old.staleReason
+        keep.windows = old.windows.filter { ($0.resetsAt ?? .distantFuture) > Date() }
+        return keep.windows.isEmpty ? new : keep
     }
 
     private func recompute() {

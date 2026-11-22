@@ -5,6 +5,7 @@ import SwiftUI
 struct TallyMain {
     static func main() {
         if CommandLine.arguments.contains("--dump") { Dump.run(); return }
+        if CommandLine.arguments.contains("--test-hook") { exit(Hook.test()) }
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
             MainActor.assumeIsolated { Snapshot.run(to: CommandLine.arguments[i + 1]) }
             return
@@ -303,6 +304,15 @@ enum Snapshot {
             }
             return
         }
+        // TALLY_STATES=1: the meter's forecast and freshness states with made-up numbers, for design checks.
+        if env["TALLY_STATES"] != nil {
+            NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
+                let r = ImageRenderer(content: MeterStates().environment(\.colorScheme, .dark))
+                r.scale = 2
+                write(r.nsImage, to: path, scale: 2)
+            }
+            return
+        }
         let store = UsageStore()
         let deadline = Date().addingTimeInterval(60)
         while (store.lastUpdated == nil || store.isLoading) && Date() < deadline {
@@ -377,5 +387,40 @@ enum Snapshot {
         guard let cg = img.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return }
         let rep = NSBitmapImageRep(cgImage: cg)
         if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: URL(fileURLWithPath: path)) }
+    }
+}
+
+private struct MeterStates: View {
+    var body: some View {
+        let now = Date()
+        let session = LimitWindow(title: "Session", usedPercent: 62, resetsAt: now.addingTimeInterval(2.5 * 3600), windowSeconds: 5 * 3600)
+        let weekly = LimitWindow(title: "Weekly", usedPercent: 58, resetsAt: now.addingTimeInterval(3 * 86_400), windowSeconds: 7 * 86_400)
+        var hit = Forecast(runsOutIn: 50 * 60, beforeReset: true, ratePerHour: 45.6); hit.early = 100 * 60
+        var wk = Forecast(runsOutIn: 1.7 * 86_400, beforeReset: true, ratePerHour: 1.0, average: true); wk.early = 1.3 * 86_400
+        var stale = ServiceLimits(service: .claude, plan: "Claude Pro", windows: [weekly])
+        stale.source = "live"; stale.checkedAt = now.addingTimeInterval(-25 * 60)
+        stale.staleReason = "Claude Code's sign-in expired 12m ago. It renews the next time you use Claude Code."
+        var logs = ServiceLimits(service: .codex, plan: "ChatGPT Plus", windows: [weekly])
+        logs.source = "logs"; logs.checkedAt = now.addingTimeInterval(-47 * 60); logs.staleReason = "Couldn't reach ChatGPT."
+        var live = ServiceLimits(service: .claude, windows: [weekly]); live.source = "live"; live.checkedAt = now.addingTimeInterval(-120)
+        return VStack(alignment: .leading, spacing: 14) {
+            LimitRow(window: session, color: Theme.severity(62), percentColor: Theme.severity(62), forecast: hit)
+            LimitRow(window: weekly, color: Theme.severity(58), percentColor: Theme.severity(58), forecast: wk)
+            Divider()
+            ForEach([("Live", live), ("Check failed", stale), ("Codex fallback", logs)], id: \.0) { name, lim in
+                let f = Freshness(lim)!
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack { Text(name).font(.system(size: 14, weight: .medium)); Spacer()
+                        Text(f.label).font(.system(size: 10.5)).foregroundStyle(f.stale ? Theme.warn : Theme.faint) }
+                    if let reason = lim.staleReason {
+                        Text(lim.source == "logs" ? "\(reason) Showing an estimate from this Mac's logs, so other devices aren't counted."
+                                                  : "\(reason) Showing the last good reading.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+                    }
+                    LimitRow(window: weekly, color: Theme.severity(58), percentColor: Theme.severity(58), forecast: nil).opacity(f.stale ? 0.55 : 1)
+                }
+            }
+        }
+        .padding(20).frame(width: 440).background(Color(nsColor: .windowBackgroundColor))
     }
 }

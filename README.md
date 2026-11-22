@@ -93,9 +93,11 @@ Tally reads the session logs your agents already write and the usage endpoints y
 ### Know when you'll run out
 
 - Every limit shows % used, a reset countdown, and a tick marking where an even pace would put you
-- **Runway forecasts**: "Runs out in ~2d 22h at this pace", based on the last hour of use, or the window average once there's enough data
+- **Pace forecasts**: "At this pace you'll hit the limit 8:35 pm, 1h 40m before reset" when you're heading for a lockout, or "On track: about 69% used by reset" when you're not. Session limits use your recent pace; weekly limits use your average since the week began, because nobody codes around the clock
+- **Freshness on every reading**: "live · 2m ago", "last checked 25m ago" or "estimate from logs · 47m ago". If a check fails (an expired token, a locked Keychain, a network blip), Tally keeps your last good numbers, dimmed, and says why
 - **Most headroom** points to the plan with the most room right now
-- **Alerts** at 80% and 95%, when a limit resets, and when you're on pace to run out before it resets
+- **Alerts** at 80% and 95%, when a limit resets, and when you're on pace to run out before it resets, shown even while the panel is open
+- **Before-cutoff hook**: run your own script when an alert fires, to save work, stop an agent or ping a chat ([see below](#before-cutoff-hook))
 
 ### See what you're getting for the money
 
@@ -113,6 +115,33 @@ Tally reads the session logs your agents already write and the usage endpoints y
 - Light, dark, or system appearance
 - Editable plan prices for the value calculation
 - Launch at login
+
+### Before-cutoff hook
+
+Make an executable script at `~/.config/tally/hook` and Tally runs it whenever an alert fires, even with notifications turned off. Tally never creates, downloads or edits this file, and it skips the hook unless the file is yours and nobody else can write to it (`chmod 755`).
+
+The details arrive as environment variables:
+
+| Variable | Example |
+| --- | --- |
+| `TALLY_EVENT` | `threshold`, `pace` (on pace to run out before reset), `reset`, or `test` |
+| `TALLY_SERVICE` / `TALLY_SERVICE_NAME` | `claude` / `Claude` (also `codex`, `opencodeGo`) |
+| `TALLY_WINDOW` | `session`, `weekly`, `monthly` |
+| `TALLY_PERCENT` | `82` |
+| `TALLY_THRESHOLD` | `80` or `95` (threshold events only) |
+| `TALLY_RESETS_AT` / `TALLY_RESETS_IN` | `2026-11-23T21:00:00Z` / seconds until reset |
+| `TALLY_TITLE` / `TALLY_MESSAGE` | the notification's text |
+
+For example, commit work in progress when a session limit is close:
+
+```sh
+#!/bin/sh
+# ~/.config/tally/hook
+[ "$TALLY_EVENT" = threshold ] && [ "$TALLY_THRESHOLD" = 95 ] || exit 0
+cd ~/code/my-project && git add -A && git commit -qm "wip: $TALLY_TITLE" --no-verify
+```
+
+Check your script with `~/Applications/Tally.app/Contents/MacOS/Tally --test-hook`, which runs it once with a sample event. Each run gets up to a minute.
 
 ## Supported plans
 
@@ -262,6 +291,8 @@ Issues and focused pull requests are welcome.
 2. To add a provider, add a parser to `Scanners.swift`, a `Service` case in `Models.swift`, and, if it has limits, a fetcher in `Limits.swift`.
 3. Check UI changes with `--snapshot` in both light and dark appearances.
 4. Keep credentials local: never log them, and only send each one to its own provider.
+
+Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Credits
 

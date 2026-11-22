@@ -196,6 +196,9 @@ struct SettingsView: View {
                     row { Text("On pace to run out early"); Spacer(); Toggle("", isOn: $prefs.alertOnPace).toggleStyle(PillToggle()) }
                 }
                 .disabled(false)
+                caption(Hook.isInstalled
+                        ? "Hook: ~/.config/tally/hook runs on every alert, with details in TALLY_* variables."
+                        : "Hook: put an executable script at ~/.config/tally/hook and Tally runs it on every alert, e.g. to save work or stop an agent before a limit hits.")
 
                 group("Plan prices") {
                     ForEach([Service.claude, .codex, .opencodeGo], id: \.self) { s in

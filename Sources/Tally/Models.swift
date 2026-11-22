@@ -167,6 +167,10 @@ struct ServiceLimits {
     var notes: [(String, String)] = []   // label, value
     var error: String?
     var source: String?
+    /// When these numbers were read (the request time for live data, the log line's time for log estimates).
+    var checkedAt: Date?
+    /// Set when the latest check failed and these are the last good numbers; says why.
+    var staleReason: String?
 
     /// The window closest to running out.
     var binding: LimitWindow? { windows.max { $0.usedPercent < $1.usedPercent } }

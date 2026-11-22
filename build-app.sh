@@ -4,7 +4,7 @@
 #   ./build-app.sh --package  build a universal (Apple Silicon + Intel) app into dist/Tally.zip
 set -e
 cd "$(dirname "$0")"
-VERSION=1.7
+VERSION=1.8
 
 make_icns() { # docs/icon-1024.png -> $1
   local SET=$(mktemp -d)/AppIcon.iconset
