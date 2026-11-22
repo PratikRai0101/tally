@@ -134,28 +134,6 @@ final class LimitHistory {
     }
 }
 
-// MARK: - Plan value
-
-enum PlanPricing {
-    /// A sensible monthly price for a detected plan name. Users can override it in Settings.
-    static func defaultPrice(for service: Service, plan: String?) -> Double {
-        let p = (plan ?? "").lowercased()
-        switch service {
-        case .claude:
-            if p.contains("max") { return p.contains("20") ? 200 : 100 }
-            if p.contains("team") { return 30 }
-            return p.contains("pro") || p.isEmpty ? 20 : 0
-        case .codex:
-            if p.contains("pro") { return 200 }
-            if p.contains("plus") || p.isEmpty { return 20 }
-            if p.contains("team") || p.contains("business") { return 30 }
-            return 0
-        case .opencodeGo: return 10
-        default: return 0
-        }
-    }
-}
-
 // MARK: - Alerts
 
 @MainActor

@@ -127,6 +127,8 @@ function serviceFrom(provider) {
   switch (String(provider || "").toLowerCase()) {
     case "anthropic": case "claude": return "claude";
     case "openai-codex": case "codex": case "chatgpt": return "codex";
+    case "xai": case "grok": return "grok";
+    case "cursor": return "cursor";
     case "opencode-go": return "opencodeGo";
     case "opencode": case "opencode-zen": return "opencodeZen";
     case "openai": return "openai";
@@ -228,6 +230,34 @@ function parsePi(file, rate, out, hits) {
   });
 }
 
+/** Grok CLI: ~/.grok/sessions/<cwd>/<session>/updates.jsonl records tokens and cost (1 USD = 1e10 ticks) per turn. */
+function parseGrok(file, rate, out, hits) {
+  if (path.basename(file) !== "updates.jsonl") return;
+  const session = path.basename(path.dirname(file));
+  eachLine(file, ['"turn_completed"', '"retry_state"'], (o, i) => {
+    const p = o.params || {}, u = p.update || {}, meta = p._meta || {};
+    const t = typeof meta.agentTimestampMs === "number" ? meta.agentTimestampMs : (typeof o.timestamp === "number" ? o.timestamp * 1000 : 0);
+    if (!t) return;
+    if (i === 1) {
+      const r = String(u.reason || "");
+      if (u.error_type === "rate_limited" && (r.includes("usage-exhausted") || /usage limit/i.test(r)))
+        hits.push({ t, svc: "grok", kind: r.includes("24-hour") ? "daily" : "limit", resetAt: null });
+      return;
+    }
+    const usage = u.usage;
+    if (!usage) return;
+    const models = usage.modelUsage && Object.keys(usage.modelUsage).length ? usage.modelUsage : { grok: usage };
+    for (const [model, m] of Object.entries(models)) {
+      const read = int(m.cachedReadTokens), write = int(m.cacheCreationTokens);
+      const input = Math.max(0, int(m.inputTokens) - read), output = int(m.outputTokens);
+      let cost = int(m.costUsdTicks) / 1e10;
+      if (!cost) { const r = rate(model); if (r) cost = input * r.input + output * r.output + read * r.cacheRead + write * r.cacheWrite; }
+      out.push({ t, tool: "grok", svc: "grok", model, tokens: input + output + read + write, cost, session,
+        key: meta.eventId ? `grok:${meta.eventId}:${model}` : undefined });
+    }
+  });
+}
+
 function scanOpenCode(since, out) {
   const db = path.join(HOME, ".local", "share", "opencode", "opencode.db");
   if (!fs.existsSync(db)) return;
@@ -263,6 +293,7 @@ async function scan() {
   for (const f of roots([".claude/projects", ".config/claude/projects"])) parseClaude(f, rate, recs, hits);
   for (const f of roots([".codex/sessions", ".codex/archived_sessions"])) parseCodex(f, rate, recs, hits, near);
   for (const f of roots([".pi/agent/sessions"])) parsePi(f, rate, recs, hits);
+  for (const f of roots([".grok/sessions"])) parseGrok(f, rate, recs, hits);
   scanOpenCode(since, recs);
   const seen = new Set();
   return {
@@ -373,10 +404,10 @@ function opener(file) {
 }
 
 async function wrapped({ say, flags, version }) {
-  say("Reading your Claude Code, Codex, Pi and OpenCode logs (last 30 days)…");
+  say("Reading your Claude Code, Codex, Pi, OpenCode and Grok logs (last 30 days)…");
   const scanned = await scan(), recs = scanned.recs;
   if (!recs.length) {
-    say("No usage found. Tally reads ~/.claude/projects, ~/.codex/sessions, ~/.pi/agent/sessions and OpenCode's database.");
+    say("No usage found. Tally reads ~/.claude/projects, ~/.codex/sessions, ~/.pi/agent/sessions, ~/.grok/sessions and OpenCode's database.");
     return;
   }
   const now = Date.now();

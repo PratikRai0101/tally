@@ -65,6 +65,7 @@ final class UsageScanner {
         run([".claude/projects", ".config/claude/projects"]) { self.parseClaude($0) }
         run([".codex/sessions", ".codex/archived_sessions"]) { self.parseCodex($0) }
         run([".pi/agent/sessions"]) { self.parsePi($0) }
+        run([".grok/sessions"]) { self.parseGrok($0) }
         fileCache = fileCache.filter { seenPaths.contains($0.key) }
 
         all.append(contentsOf: scanOpenCode(since: since))
@@ -321,6 +322,55 @@ final class UsageScanner {
             out.append(UsageRecord(date: date, tool: .pi, service: Service.from(provider: provider), model: provider.map { "\($0)/\(model)" } ?? model,
                                    input: input, cacheRead: read, cacheWrite: write, output: output,
                                    cost: cost, session: session, cwd: cwd))
+        }
+        return Parsed(records: out, lockouts: hits)
+    }
+
+    // MARK: - Grok CLI (~/.grok/sessions/<cwd>/<session>/updates.jsonl) — Grok records tokens and cost per turn
+
+    private static let grokTicksPerUSD = 1e10
+
+    private func parseGrok(_ url: URL) -> Parsed {
+        guard url.lastPathComponent == "updates.jsonl" else { return Parsed() }
+        var out: [UsageRecord] = []
+        var hits: [Lockout] = []
+        let dir = url.deletingLastPathComponent()
+        let session = dir.lastPathComponent
+        var cwd = (dir.deletingLastPathComponent().lastPathComponent.removingPercentEncoding) ?? ""
+        if let data = try? Data(contentsOf: dir.appendingPathComponent("summary.json")),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let info = obj["info"] as? [String: Any], let c = info["cwd"] as? String { cwd = c }
+        lines(of: url, containing: ["\"turn_completed\"", "\"retry_state\""]) { obj, kind in
+            guard let params = obj["params"] as? [String: Any], let update = params["update"] as? [String: Any] else { return }
+            let meta = params["_meta"] as? [String: Any]
+            let date = (meta?["agentTimestampMs"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+                ?? (obj["timestamp"] as? Double).map { Date(timeIntervalSince1970: $0) }
+            guard let date else { return }
+            if kind == 1 {
+                // "subscription:free-usage-exhausted: … resets over a rolling 24-hour window". Plain request-rate
+                // throttling ("sending requests too quickly") is not a plan limit.
+                if update["error_type"] as? String == "rate_limited", let reason = update["reason"] as? String,
+                   reason.contains("usage-exhausted") || reason.range(of: "usage limit", options: .caseInsensitive) != nil {
+                    let kind = reason.contains("24-hour") ? "daily" : "limit"
+                    hits.append(Lockout(date: date, service: .grok, kind: kind, resetAt: nil))
+                }
+                return
+            }
+            guard let usage = update["usage"] as? [String: Any] else { return }
+            var models = (usage["modelUsage"] as? [String: [String: Any]]) ?? [:]
+            if models.isEmpty { models = ["grok": usage] }
+            let event = meta?["eventId"] as? String
+            for (model, u) in models {
+                let read = int(u["cachedReadTokens"]), write = int(u["cacheCreationTokens"])
+                let input = max(0, int(u["inputTokens"]) - read), output = int(u["outputTokens"])
+                var cost = Double(int(u["costUsdTicks"])) / Self.grokTicksPerUSD
+                if cost == 0, let r = pricing.rate(for: model) {
+                    cost = Double(input) * r.input + Double(output) * r.output + Double(read) * r.cacheRead + Double(write) * r.cacheWrite
+                }
+                out.append(UsageRecord(date: date, tool: .grok, service: .grok, model: model,
+                                       input: input, cacheRead: read, cacheWrite: write, output: output,
+                                       cost: cost, session: session, dedupKey: event.map { "grok:\($0):\(model)" }, cwd: cwd))
+            }
         }
         return Parsed(records: out, lockouts: hits)
     }

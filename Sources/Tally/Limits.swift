@@ -1,4 +1,6 @@
+import CommonCrypto
 import Foundation
+import SQLite3
 
 /// Live plan limits, read with the logins the CLIs already keep on this Mac.
 /// Each credential is only sent to its own provider and is never refreshed or written back,
@@ -167,6 +169,232 @@ enum LimitsFetcher {
         return result
     }
 
+    // MARK: Cursor — Cursor.app's sign-in (state.vscdb) → cursor.com/api/usage-summary
+
+    /// nil when Cursor isn't installed or signed in on this Mac (no card then: Cursor keeps no local usage logs).
+    static func cursor() async -> ServiceLimits? {
+        let db = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        guard let stored = sqliteValue(db.path, key: "cursorAuth/accessToken"), !stored.isEmpty else { return nil }
+        var result = ServiceLimits(service: .cursor, windows: [])
+        guard let token = cursorToken(stored) else {
+            result.error = "Couldn't read Cursor's sign-in"
+            return result
+        }
+        guard let claims = jwtClaims(token), let sub = claims["sub"] as? String,
+              let user = sub.split(separator: "|").last else {
+            result.error = "Couldn't read Cursor's sign-in"
+            return result
+        }
+        if let exp = number(claims["exp"]), Date(timeIntervalSince1970: exp) < Date().addingTimeInterval(60) {
+            // Cursor renews its own token while it runs; Tally never touches it.
+            result.error = "Cursor's sign-in expired. It renews the next time you open Cursor."
+            return result
+        }
+        var req = URLRequest(url: URL(string: "https://cursor.com/api/usage-summary")!)
+        req.setValue("WorkosCursorSessionToken=\(user)%3A%3A\(token)", forHTTPHeaderField: "Cookie")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.httpShouldHandleCookies = false
+        req.timeoutInterval = 15
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else {
+            result.error = "Couldn't reach Cursor"
+            return result
+        }
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            result.error = status == 401 || status == 403 ? "Cursor's sign-in expired. It renews the next time you open Cursor."
+                                                          : "Cursor usage unavailable (\(status))"
+            return result
+        }
+        parseCursor(json, into: &result)
+        if result.error != nil { return result }
+        result.source = "live"
+        result.checkedAt = Date()
+        return result
+    }
+
+    /// Fills plan, windows and notes from a cursor.com/api/usage-summary response.
+    static func parseCursor(_ json: [String: Any], into result: inout ServiceLimits) {
+        if let m = json["membershipType"] as? String { result.plan = cursorPlan(m) }
+        let start = parseDate(json["billingCycleStart"]), end = parseDate(json["billingCycleEnd"])
+        let secs = start.flatMap { s in end.map { $0.timeIntervalSince(s) } } ?? 30 * 86_400
+        let individual = json["individualUsage"] as? [String: Any]
+        let plan = individual?["plan"] as? [String: Any]
+        // Percent fields are already percentages (0.36 means 0.36%). used/limit are cents.
+        var pct = number(plan?["totalPercentUsed"])
+        if pct == nil, let used = number(plan?["used"]), let limit = number(plan?["limit"]), limit > 0 { pct = used / limit * 100 }
+        if pct == nil, let o = individual?["overall"] as? [String: Any], let used = number(o["used"]), let limit = number(o["limit"]), limit > 0 {
+            pct = used / limit * 100
+        }
+        if let pct {
+            result.windows.append(LimitWindow(title: windowTitle(seconds: secs), usedPercent: min(100, max(0, pct)),
+                                              resetsAt: end, windowSeconds: secs))
+        }
+        if let a = number(plan?["autoPercentUsed"]), let b = number(plan?["apiPercentUsed"]) {
+            result.notes.append(("Auto · API", "\(Int(a.rounded()))% · \(Int(b.rounded()))%"))
+        }
+        if let od = individual?["onDemand"] as? [String: Any], od["enabled"] as? Bool == true, let used = number(od["used"]) {
+            let limit = number(od["limit"]).map { " / \(Fmt.money($0 / 100))" } ?? ""
+            result.notes.append(("On-demand", "\(Fmt.money(used / 100))\(limit)"))
+        }
+        if result.windows.isEmpty, json["isUnlimited"] as? Bool != true {
+            result.error = "Cursor didn't report plan usage"
+            return
+        }
+    }
+
+    private static func cursorPlan(_ m: String) -> String {
+        switch m.lowercased() {
+        case "free", "": return "Cursor Hobby"
+        case "free_trial": return "Cursor Pro trial"
+        case "pro_plus": return "Cursor Pro+"
+        case "ultra": return "Cursor Ultra"
+        case "enterprise", "team", "business": return "Cursor \(m.capitalized)"
+        default: return "Cursor \(m.replacingOccurrences(of: "_", with: " ").capitalized)"
+        }
+    }
+
+    /// Asked for at most once per launch: if you deny the Keychain prompt, Tally won't ask again until it restarts.
+    private static var cursorKeyDenied = false
+    private static var cursorKey: Data?
+
+    /// Plain JWT, or Cursor 3.27+'s "cursor-safe-storage:v1:" token, which is Chromium Safe Storage
+    /// (AES-128-CBC, key = PBKDF2-SHA1(password from the "Cursor Safe Storage" Keychain item, "saltysalt", 1003)).
+    private static func cursorToken(_ stored: String) -> String? {
+        let prefix = "cursor-safe-storage:v1:"
+        guard stored.hasPrefix(prefix) else { return stored }
+        guard let blob = Data(base64Encoded: String(stored.dropFirst(prefix.count))), blob.starts(with: Data("v10".utf8)) else { return nil }
+        if cursorKey == nil, !cursorKeyDenied {
+            for account in ["Cursor Key", "Cursor"] {
+                let r = run("/usr/bin/security", ["find-generic-password", "-s", "Cursor Safe Storage", "-a", account, "-w"])
+                if let pw = r.out { cursorKey = pbkdf2(pw); break }
+            }
+            if cursorKey == nil { cursorKeyDenied = true }
+        }
+        guard let key = cursorKey, let plain = aesCBCDecrypt(blob.dropFirst(3), key: key) else { return nil }
+        return String(data: plain, encoding: .utf8)
+    }
+
+    static func pbkdf2(_ password: String) -> Data {
+        var key = Data(count: kCCKeySizeAES128)
+        let salt = Array("saltysalt".utf8)
+        let pw = Array(password.utf8)
+        _ = key.withUnsafeMutableBytes { k in
+            CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), pw.map { CChar(bitPattern: $0) }, pw.count, salt, salt.count,
+                                 CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA1), 1003,
+                                 k.bindMemory(to: UInt8.self).baseAddress, kCCKeySizeAES128)
+        }
+        return key
+    }
+
+    static func aesCBCDecrypt(_ data: Data, key: Data) -> Data? {
+        let iv = [UInt8](repeating: 0x20, count: kCCBlockSizeAES128)
+        var out = Data(count: data.count + kCCBlockSizeAES128)
+        var moved = 0
+        let status = out.withUnsafeMutableBytes { o in
+            data.withUnsafeBytes { d in
+                key.withUnsafeBytes { k in
+                    CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(kCCOptionPKCS7Padding),
+                            k.baseAddress, key.count, iv, d.baseAddress, data.count, o.baseAddress, o.count, &moved)
+                }
+            }
+        }
+        guard status == kCCSuccess else { return nil }
+        return out.prefix(moved)
+    }
+
+    /// Reads one ItemTable value from a VS Code-style state database, read-only.
+    private static func sqliteValue(_ path: String, key: String) -> String? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return nil }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 2000)
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT value FROM ItemTable WHERE key = ?", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        let n = Int(sqlite3_column_bytes(stmt, 0))
+        guard n > 0, let p = sqlite3_column_blob(stmt, 0) else { return nil }
+        let data = Data(bytes: p, count: n)
+        // Values are TEXT, but some versions store UTF-16LE blobs.
+        if data.count > 1, data[data.startIndex + 1] == 0, let s = String(data: data, encoding: .utf16LittleEndian) { return s }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\"").union(.whitespacesAndNewlines))
+    }
+
+    private static func jwtClaims(_ jwt: String) -> [String: Any]? {
+        let parts = jwt.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var b = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        b += String(repeating: "=", count: (4 - b.count % 4) % 4)
+        guard let d = Data(base64Encoded: b) else { return nil }
+        return try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+    }
+
+    // MARK: Grok — Grok CLI's sign-in (~/.grok/auth.json) → cli-chat-proxy.grok.com/v1/billing
+
+    /// nil when the Grok CLI isn't signed in on this Mac.
+    static func grok() async -> ServiceLimits? {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".grok/auth.json")
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        // One entry per sign-in; use the newest.
+        let entries = obj.values.compactMap { $0 as? [String: Any] }.filter { $0["key"] is String }
+        guard let auth = entries.max(by: { (parseDate($0["expires_at"]) ?? .distantPast) < (parseDate($1["expires_at"]) ?? .distantPast) }),
+              let token = auth["key"] as? String else { return nil }
+        var result = ServiceLimits(service: .grok, windows: [])
+        if let exp = parseDate(auth["expires_at"]), exp < Date().addingTimeInterval(60) {
+            // The Grok CLI renews its own sign-in when it runs; Tally never touches it.
+            result.error = "Grok's sign-in expired \(Fmt.ago(exp)). It renews the next time you use Grok."
+            return result
+        }
+        func request(_ path: String) -> URLRequest {
+            var req = URLRequest(url: URL(string: "https://cli-chat-proxy.grok.com\(path)")!)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("xai-grok-cli", forHTTPHeaderField: "x-xai-token-auth")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.timeoutInterval = 15
+            return req
+        }
+        guard let (body, resp) = try? await URLSession.shared.data(for: request("/v1/billing?format=credits")) else {
+            result.error = "Couldn't reach Grok"
+            return result
+        }
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            result.error = status == 401 ? "Grok's sign-in expired. It renews the next time you use Grok." : "Grok usage unavailable (\(status))"
+            return result
+        }
+        if let (sb, sr) = try? await URLSession.shared.data(for: request("/v1/settings")),
+           (sr as? HTTPURLResponse)?.statusCode == 200,
+           let st = try? JSONSerialization.jsonObject(with: sb) as? [String: Any],
+           let tier = st["subscription_tier_display"] as? String, !tier.isEmpty {
+            result.plan = tier
+        }
+        parseGrok(json, into: &result)
+        if result.windows.isEmpty { return result }
+        result.source = "live"
+        result.checkedAt = Date()
+        return result
+    }
+
+    /// Fills the usage window from a cli-chat-proxy.grok.com/v1/billing?format=credits response.
+    static func parseGrok(_ json: [String: Any], into result: inout ServiceLimits) {
+        let cfg = json["config"] as? [String: Any] ?? json
+        func val(_ v: Any?) -> Double? { (v as? [String: Any]).flatMap { number($0["val"]) } ?? number(v) }
+        var pct = number(cfg["creditUsagePercent"])
+        if pct == nil, let used = val(cfg["onDemandUsed"]), let cap = val(cfg["onDemandCap"]), cap > 0 { pct = used / cap * 100 }
+        let period = cfg["currentPeriod"] as? [String: Any]
+        let end = parseDate(period?["end"]) ?? parseDate(cfg["billingPeriodEnd"])
+        let start = parseDate(period?["start"]) ?? parseDate(cfg["billingPeriodStart"])
+        let secs = start.flatMap { s in end.map { $0.timeIntervalSince(s) } }.flatMap { $0 > 0 ? $0 : nil }
+        // Free accounts and the first hours of a period can omit the percentage; show spend only then.
+        guard let pct else { return }
+        result.windows.append(LimitWindow(title: secs.map { windowTitle(seconds: $0) } ?? "Credits", usedPercent: min(100, max(0, pct)),
+                                          resetsAt: end, windowSeconds: secs))
+    }
+
     // MARK: helpers
 
     private static func number(_ v: Any?) -> Double? {
@@ -178,7 +406,10 @@ enum LimitsFetcher {
     }
 
     private static func parseDate(_ v: Any?) -> Date? {
+        if let o = v as? [String: Any], let secs = number(o["seconds"]) { return Date(timeIntervalSince1970: secs) }
+        if !(v is String), let n = number(v), n > 0 { return Date(timeIntervalSince1970: n > 1e11 ? n / 1000 : n) }
         guard let s = v as? String else { return nil }
+        if let n = Double(s), n > 1e9 { return Date(timeIntervalSince1970: n > 1e11 ? n / 1000 : n) }
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = f.date(from: s) { return d }

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The app that made the request (where the logs come from).
 enum Tool: String, CaseIterable, Identifiable, Hashable {
-    case claudeCode, codex, pi, opencode
+    case claudeCode, codex, pi, opencode, grok
     var id: String { rawValue }
     var name: String {
         switch self {
@@ -11,6 +11,7 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         case .codex: return "Codex CLI"
         case .pi: return "Pi"
         case .opencode: return "OpenCode"
+        case .grok: return "Grok CLI"
         }
     }
 
@@ -20,13 +21,14 @@ enum Tool: String, CaseIterable, Identifiable, Hashable {
         case .codex: return .codex
         case .pi: return .pi
         case .opencode: return .opencode
+        case .grok: return .grok
         }
     }
 }
 
 /// The subscription / account that paid for it. Cards, limits and the menu bar are per service.
 enum Service: String, CaseIterable, Identifiable, Hashable {
-    case claude, codex, opencodeGo, opencodeZen, openai, other
+    case claude, codex, cursor, grok, opencodeGo, opencodeZen, openai, other
 
     var id: String { rawValue }
 
@@ -34,6 +36,8 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .claude: return "Claude"
         case .codex: return "Codex"
+        case .cursor: return "Cursor"
+        case .grok: return "Grok"
         case .opencodeGo: return "OpenCode Go"
         case .opencodeZen: return "OpenCode Zen"
         case .openai: return "OpenAI"
@@ -45,6 +49,8 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .claude: return "Claude"
         case .codex: return "ChatGPT"
+        case .cursor: return "Cursor"
+        case .grok: return "Grok"
         case .opencodeGo: return "Go subscription"
         case .opencodeZen: return "Free models"
         case .openai: return "API"
@@ -56,6 +62,8 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .claude: return "asterisk"
         case .codex: return "circle.hexagongrid"
+        case .cursor: return "cursorarrow"
+        case .grok: return "sparkle"
         case .opencodeGo: return "bolt.square"
         case .opencodeZen: return "square.dashed"
         case .openai: return "circle.grid.cross"
@@ -79,6 +87,8 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .claude: return .clawdMono
         case .codex: return .codex
+        case .cursor: return .cursor
+        case .grok: return .grok
         case .opencodeGo, .opencodeZen: return .opencode
         case .openai: return .openai
         case .other: return nil
@@ -89,6 +99,8 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .claude: return NSColor(hex: 0xE2774F)
         case .codex: return .dynamic(light: NSColor(hex: 0x3A3A40), dark: NSColor(hex: 0xE8E8EA))
+        case .cursor: return NSColor(hex: 0x2BB5C9)
+        case .grok: return NSColor(hex: 0xE5566F)
         case .opencodeGo: return NSColor(hex: 0x42C08D)
         case .opencodeZen: return NSColor(hex: 0x4E95F5)
         case .openai: return NSColor(hex: 0x9B7BEA)
@@ -96,13 +108,19 @@ enum Service: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    var hasLimits: Bool { self == .claude || self == .codex || self == .opencodeGo }
+    var hasLimits: Bool { self == .claude || self == .codex || self == .opencodeGo || self == .cursor || self == .grok }
+
+    /// Shown even with no usage on this Mac (their limits are the point). Cursor and Grok appear once
+    /// they have usage or a live reading, so people who don't use them don't get an empty card.
+    var showsWithoutUsage: Bool { self == .claude || self == .codex || self == .opencodeGo }
 
     /// Maps a provider id from Pi / OpenCode logs onto a service.
     static func from(provider: String?) -> Service {
         switch provider?.lowercased() ?? "" {
         case "anthropic", "claude": return .claude
         case "openai-codex", "codex", "chatgpt": return .codex
+        case "xai", "grok": return .grok
+        case "cursor": return .cursor
         case "opencode-go": return .opencodeGo
         case "opencode", "opencode-zen": return .opencodeZen
         case "openai": return .openai
@@ -249,7 +267,8 @@ enum Fmt {
         if s < 10 { return "just now" }
         if s < 60 { return "\(s)s ago" }
         if s < 3600 { return "\(s / 60)m ago" }
-        return "\(s / 3600)h ago"
+        if s < 2 * 86_400 { return "\(s / 3600)h ago" }
+        return "\(s / 86_400)d ago"
     }
 }
 
@@ -288,6 +307,11 @@ enum Theme {
     static let faint = dyn(0xA1A1A6, 0x5A5A60)
     /// Neutral ink for empty grids / hatching.
     static let ink = Color(nsColor: .dynamic(light: .black, dark: .white))
+    /// Settings sidebar and raised segmented-control thumb.
+    static let sidebar = dyn(0xEFEDE8, 0x151517)
+    static let raised = dyn(0xFFFFFF, 0x3A3A3F)
+    /// Tally orange (site and Wrapped).
+    static let accent = Color(hex: 0xE5874C)
 
     static let good = Color(hex: 0x42C08D)
     static let warn = Color(hex: 0xE5B23C)

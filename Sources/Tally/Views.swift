@@ -100,7 +100,7 @@ struct PopoverView: View {
                 Segmented(options: Period.allCases, selection: $store.period) { $0.rawValue }
                 Segmented(options: Metric.allCases, selection: $store.metric) { $0.rawValue }
                 Spacer()
-                Text("\(store.totals.sessions) sessions").font(.system(size: 11)).foregroundStyle(Theme.faint)
+                Text("\(store.totals.sessions) session\(store.totals.sessions == 1 ? "" : "s")").font(.system(size: 11)).foregroundStyle(Theme.faint)
             }
         }
     }
@@ -276,7 +276,7 @@ struct ServiceCard: View {
             HStack {
                 Text("This Mac · \(store.period.label)").foregroundStyle(Theme.dim)
                 if let s = summary, s.sessions.count > 0 {
-                    Text("· \(s.sessions.count) sessions").foregroundStyle(Theme.faint)
+                    Text("· \(s.sessions.count) session\(s.sessions.count == 1 ? "" : "s")").foregroundStyle(Theme.faint)
                 }
                 Spacer()
                 if free {

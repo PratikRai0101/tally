@@ -100,7 +100,9 @@ final class UsageStore: ObservableObject {
                 async let c = LimitsFetcher.claude()
                 async let x = LimitsFetcher.codex(fallback: result.codexLogLimits)
                 async let g = LimitsFetcher.opencodeGo()
-                fetched = await [c, x, g]
+                async let cu = LimitsFetcher.cursor()
+                async let gr = LimitsFetcher.grok()
+                fetched = await [c, x, g, cu, gr].compactMap { $0 }
             }
             let newLimits = fetched
             await MainActor.run {
@@ -307,6 +309,6 @@ final class UsageStore: ObservableObject {
 
     /// Services to show, in the user's order: switched on, and with either limits or usage in the last 30 days.
     func visibleServices(_ prefs: Prefs) -> [Service] {
-        prefs.order.filter { prefs.isOn($0) && ($0.hasLimits || usedServices.contains($0)) }
+        prefs.order.filter { prefs.isOn($0) && ($0.showsWithoutUsage || usedServices.contains($0) || limits[$0]?.windows.isEmpty == false) }
     }
 }

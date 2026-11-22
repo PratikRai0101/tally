@@ -5,7 +5,7 @@
 
   <p><strong>Every AI subscription, at a glance.</strong></p>
   <p>
-    A native macOS menu bar app for Claude, Codex, and OpenCode.<br />
+    A native macOS menu bar app for Claude, Codex, Cursor, Grok, and OpenCode.<br />
     See how much of each plan's limit is left, when it resets, how fast you're burning it, and what it would have cost at API prices.
   </p>
 
@@ -42,7 +42,7 @@ npx tally-menubar
 npx tally-menubar wrapped
 ```
 
-Reads the logs Claude Code, Codex, Pi and OpenCode already keep, and opens your last 24 hours, 7 days or 30 days as six story slides and a card for X: your total at API prices, what your plans cost, your top plans and models, tokens counted in copies of *War and Peace*, the hours you code, and every time a plan locked you out. Works on macOS, Linux and Windows with Node 18+. Nothing is uploaded and no project names appear.
+Reads the logs Claude Code, Codex, Pi, OpenCode and the Grok CLI already keep, and opens your last 24 hours, 7 days or 30 days as six story slides and a card for X: your total at API prices, what your plans cost, your top plans and models, tokens counted in copies of *War and Peace*, the hours you code, and every time a plan locked you out. Works on macOS, Linux and Windows with Node 18+. Nothing is uploaded and no project names appear.
 
 <p align="center">
   <img src="docs/wrapped.png" width="760" alt="Tally Wrapped: six dithered story slides showing a week's AI coding total, top plans, tokens, coding hours and a summary" />
@@ -150,6 +150,8 @@ Check your script with `~/Applications/Tally.app/Contents/MacOS/Tally --test-hoo
 | **Claude** (Pro / Max) | Session (5h), weekly, per-model weekly | Claude Code |
 | **Codex** (ChatGPT Plus / Pro) | Session, weekly, reset credits | Codex CLI, Pi (`openai-codex`) |
 | **OpenCode Go** | Rolling 5h, weekly, monthly | Pi (`opencode-go`), OpenCode |
+| **Cursor** (Hobby / Pro / Pro+ / Ultra / Teams) | Monthly included usage, Auto vs API split, on-demand spend | — (Cursor keeps no local usage logs; the card appears once Cursor is signed in) |
+| **Grok** (SuperGrok / Heavy) | Weekly or monthly credits | Grok CLI (Grok Build), including cost and daily free-tier lockouts |
 | **OpenCode Zen** | — (free models) | OpenCode |
 | **OpenAI** | — | Pi (`openai`) |
 
@@ -160,7 +162,7 @@ Cards are grouped by **plan**, not by app. If one tool spends on several plans (
 ### Requirements
 
 - macOS 14 (Sonoma) or later, on Apple Silicon or Intel
-- At least one of Claude Code, Codex, Pi, or OpenCode, signed in
+- At least one of Claude Code, Codex, Pi, OpenCode, Cursor, or the Grok CLI, signed in
 - Node 18 or later for the npx install, or Homebrew
 
 ### npx (recommended)
@@ -215,10 +217,12 @@ Tally has no account, analytics, or telemetry, and no server of its own. Everyth
 
 | Data | Where it comes from |
 | --- | --- |
-| Spend and tokens | Session logs in `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, and OpenCode's `~/.local/share/opencode/opencode.db` |
+| Spend and tokens | Session logs in `~/.claude/projects`, `~/.codex/sessions`, `~/.pi/agent/sessions`, `~/.grok/sessions`, and OpenCode's `~/.local/share/opencode/opencode.db` |
 | Claude limits | The Claude Code login in your Keychain (`Claude Code-credentials`) → `api.anthropic.com/api/oauth/usage` |
 | Codex limits | `~/.codex/auth.json` → `chatgpt.com/backend-api/wham/usage`, falling back to the rate limits in Codex's own logs |
 | OpenCode Go limits | The Go API key from Pi or OpenCode (or `OPENCODE_GO_API_KEY`) → `opencode.ai/zen/go/v1/usage` |
+| Cursor limits | Cursor's sign-in in its local state database (read-only) → `cursor.com/api/usage-summary`. Newer Cursor versions encrypt it, so macOS asks once for access to `Cursor Safe Storage` |
+| Grok limits | `~/.grok/auth.json` → `cli-chat-proxy.grok.com/v1/billing` |
 | Prices | The [LiteLLM price table](https://github.com/BerriAI/litellm): T3 Code's cached copy if present, otherwise downloaded once |
 
 Each credential is sent only to its own provider. Tally never refreshes or rewrites a login, so your CLIs' sessions are left alone. These usage endpoints are undocumented and may change.
@@ -277,7 +281,6 @@ Tally is a Swift package with a SwiftUI panel inside an AppKit status item. It h
 
 Tally works day to day on the plans above. Next up:
 
-- [ ] Grok Build usage and limits
 - [ ] Signed and notarized builds
 - [ ] Daily and weekly budgets with menu bar warnings
 - [ ] CSV export

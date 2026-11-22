@@ -5,6 +5,17 @@ import SwiftUI
 struct TallyMain {
     static func main() {
         if CommandLine.arguments.contains("--dump") { Dump.run(); return }
+        // `Tally --parse cursor|grok response.json` checks the parsers against a saved response.
+        if let i = CommandLine.arguments.firstIndex(of: "--parse"), CommandLine.arguments.count > i + 2,
+           let data = FileManager.default.contents(atPath: CommandLine.arguments[i + 2]),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let cursor = CommandLine.arguments[i + 1] == "cursor"
+            var l = ServiceLimits(service: cursor ? .cursor : .grok, windows: [])
+            if cursor { LimitsFetcher.parseCursor(json, into: &l) } else { LimitsFetcher.parseGrok(json, into: &l) }
+            print("[\(l.plan ?? "?")] \(l.error ?? "") \(l.notes.map { "\($0.0): \($0.1)" }.joined(separator: ", "))")
+            for w in l.windows { print("  \(w.title): \(String(format: "%.1f", w.usedPercent))% used, window \(Int((w.windowSeconds ?? 0) / 86_400))d, resets in \(Fmt.countdown(to: w.resetsAt))") }
+            return
+        }
         if CommandLine.arguments.contains("--test-hook") { exit(Hook.test()) }
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
             MainActor.assumeIsolated { Snapshot.run(to: CommandLine.arguments[i + 1]) }
@@ -49,13 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updateStatusItem()
             self?.updateHotKey()
         }
-        SettingsWindow.shared.plans = { [weak self] in
-            Dictionary(uniqueKeysWithValues: (self?.store.limits ?? [:]).compactMap { k, v in v.plan.map { (k, $0) } })
-        }
+        SettingsWindow.shared.store = store
         Notifier.shared.requestPermission()
         updateHotKey()
         updateStatusItem()
-        if CommandLine.arguments.contains("--open-settings") { SettingsWindow.shared.show() }
+        if let a = CommandLine.arguments.first(where: { $0.hasPrefix("--open-settings") }) {
+            SettingsWindow.shared.show(pane: SettingsPane(rawValue: String(a.split(separator: "=").last ?? "")))
+        }
         tick = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateStatusItem() }
         }
@@ -63,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyAppearance() {
         popover.appearance = prefs.nsAppearance
+        SettingsWindow.shared.applyAppearance()
     }
 
     @objc private func clicked() {
@@ -102,16 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
-        let entries: [MenuBarRenderer.Entry] = store.visibleServices(prefs).compactMap { s in
-            guard s.hasLimits, prefs.inMenuBar(s) else { return nil }
-            let t = store.labelTotals[prefs.labelPeriod]?[s]
-            return MenuBarRenderer.Entry(service: s, used: store.meterWindow(s, prefs.meterSource).map { $0.usedPercent / 100 },
-                                         cost: t?.cost ?? 0, tokens: t?.tokens ?? 0,
-                                         live: store.live[s] != nil)
-        }
-        let spend: String? = store.lastUpdated == nil ? "…" : store.total(prefs.spendMode, prefs.totalMetric)
-        button.image = MenuBarRenderer.image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode, label: prefs.labelKind,
-                                             colored: prefs.colorBars, trailing: spend, logos: prefs.showLogos)
+        button.image = MenuBarRenderer.statusImage(store: store, prefs: prefs)
         button.toolTip = store.visibleServices(prefs).compactMap { s -> String? in
             guard let w = store.limits[s]?.binding else { return nil }
             return "\(s.name): \(w.title.lowercased()) \(Int(w.usedPercent))% used, resets in \(Fmt.countdown(to: w.resetsAt))"
@@ -122,6 +125,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Draws the whole status item as one image: [icon][meter] per service, then today's spend.
 enum MenuBarRenderer {
     struct Entry { let service: Service; let used: Double?; var cost: Double = 0; var tokens: Int = 0; var live = false }
+
+    /// The status item image for the current numbers and prefs (also drawn in Settings → Menu bar).
+    @MainActor static func statusImage(store: UsageStore, prefs: Prefs) -> NSImage {
+        let entries: [Entry] = store.visibleServices(prefs).compactMap { s in
+            guard s.hasLimits, prefs.inMenuBar(s), s.showsWithoutUsage || store.limits[s]?.windows.isEmpty == false else { return nil }
+            let t = store.labelTotals[prefs.labelPeriod]?[s]
+            return Entry(service: s, used: store.meterWindow(s, prefs.meterSource).map { $0.usedPercent / 100 },
+                         cost: t?.cost ?? 0, tokens: t?.tokens ?? 0, live: store.live[s] != nil)
+        }
+        let spend: String? = store.lastUpdated == nil ? "…" : store.total(prefs.spendMode, prefs.totalMetric)
+        return image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode, label: prefs.labelKind,
+                     colored: prefs.colorBars, trailing: spend, logos: prefs.showLogos)
+    }
 
     static func image(entries: [Entry], style: MenuBarStyle, percents: PercentMode, label kind: LabelKind = .percent,
                       colored: Bool, trailing: String?,
@@ -273,7 +289,9 @@ enum Dump {
             async let c = LimitsFetcher.claude()
             async let x = LimitsFetcher.codex(fallback: res.codexLogLimits)
             async let g = LimitsFetcher.opencodeGo()
-            for l in await [c, x, g] {
+            async let cu = LimitsFetcher.cursor()
+            async let gr = LimitsFetcher.grok()
+            for l in await [c, x, g, cu, gr].compactMap({ $0 }) {
                 print("\n\(l.service.name) [\(l.plan ?? "?")] \(l.source ?? "") \(l.error ?? "") \(l.notes.map { "\($0.0): \($0.1)" }.joined(separator: ", "))")
                 for w in l.windows { print("  \(w.title): \(Int(w.usedPercent))% used, resets in \(Fmt.countdown(to: w.resetsAt))") }
             }
@@ -294,14 +312,6 @@ enum Snapshot {
             let r = ImageRenderer(content: AppIconView(size: 1024))
             r.scale = 1
             write(r.nsImage, to: path)
-            return
-        }
-        if env["TALLY_SETTINGS"] != nil {
-            NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
-                let r = ImageRenderer(content: SettingsView(scrolls: false).environment(\.colorScheme, .dark))
-                r.scale = 2
-                write(r.nsImage, to: path, scale: 2)
-            }
             return
         }
         // TALLY_STATES=1: the meter's forecast and freshness states with made-up numbers, for design checks.
