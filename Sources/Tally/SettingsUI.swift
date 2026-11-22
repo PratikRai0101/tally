@@ -868,6 +868,7 @@ struct Segmented<T: Hashable>: View {
                 Button { withAnimation(.easeOut(duration: 0.12)) { selection = o } } label: {
                     Text(label(o))
                         .font(.system(size: 11.5, weight: selection == o ? .semibold : .regular))
+                        .lineLimit(1).fixedSize()
                         .padding(.horizontal, 10).padding(.vertical, 4.5)
                         .background(RoundedRectangle(cornerRadius: 6).fill(selection == o ? Theme.raised : .clear)
                             .shadow(color: .black.opacity(selection == o ? 0.18 : 0), radius: 1.5, y: 0.5))

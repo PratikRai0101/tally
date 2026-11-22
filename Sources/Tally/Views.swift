@@ -100,7 +100,7 @@ struct PopoverView: View {
                 Segmented(options: Period.allCases, selection: $store.period) { $0.rawValue }
                 Segmented(options: Metric.allCases, selection: $store.metric) { $0.rawValue }
                 Spacer()
-                Text("\(store.totals.sessions) session\(store.totals.sessions == 1 ? "" : "s")").font(.system(size: 11)).foregroundStyle(Theme.faint)
+                Text("\(store.totals.sessions) session\(store.totals.sessions == 1 ? "" : "s")").font(.system(size: 11)).foregroundStyle(Theme.faint).lineLimit(1)
             }
         }
     }
