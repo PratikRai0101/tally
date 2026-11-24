@@ -115,9 +115,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
         button.image = MenuBarRenderer.statusImage(store: store, prefs: prefs)
+        let display = prefs.labelKind.quotaDisplay
         button.toolTip = store.visibleServices(prefs).compactMap { s -> String? in
             guard let w = store.limits[s]?.binding else { return nil }
-            return "\(s.name): \(w.title.lowercased()) \(Int(w.usedPercent))% used, resets in \(Fmt.countdown(to: w.resetsAt))"
+            let pct = display == .remaining ? display.summary(used: w.usedPercent) : "\(Int(w.usedPercent))% used"
+            return "\(s.name): \(w.title.lowercased()) \(pct), resets in \(Fmt.countdown(to: w.resetsAt))"
         }.joined(separator: "\n") + "\nToday: \(Fmt.money(store.todayCost))"
     }
 }
@@ -148,8 +150,9 @@ enum MenuBarRenderer {
         let iconW: CGFloat = logos ? 14 : 0
         let meterW: CGFloat = style == .columns ? 6 : 20
         let gap: CGFloat = 3, between: CGFloat = 9
+        let display = kind.quotaDisplay
 
-        /// The label after a meter: % used, cost or tokens; "High usage" shows it only once the limit passes 70%.
+        /// The label after a meter: % used, % left, cost or tokens; "High usage" shows it only once the limit passes 70%.
         func labelText(_ e: Entry) -> String? {
             switch percents {
             case .never: return nil
@@ -158,7 +161,7 @@ enum MenuBarRenderer {
             }
             switch kind {
             case .off: return nil
-            case .percent: return e.used.map { "\(Int(($0 * 100).rounded()))%" }
+            case .percent, .remaining: return e.used.map { display.label(used: $0 * 100) }
             case .cost: return Fmt.moneyShort(e.cost)
             case .tokens: return Fmt.tokens(e.tokens)
             }
@@ -197,13 +200,14 @@ enum MenuBarRenderer {
                 }
                 x += iconW + (logos ? gap : 0)
                 let used = min(1, max(0, e.used ?? 0))
+                let fill = display == .remaining ? 1 - used : used
                 let fillColor: NSColor = colored ? severity(used) : label
-                drawMeter(at: x, style: style, width: meterW, height: h, used: used, known: e.used != nil,
+                drawMeter(at: x, style: style, width: meterW, height: h, used: fill, known: e.used != nil,
                           fill: fillColor, empty: label.withAlphaComponent(0.22))
                 x += meterW
                 if let t = labelText(e) {
                     (t as NSString).draw(at: NSPoint(x: x + 2, y: (h - font.capHeight) / 2 - 3),
-                                         withAttributes: [.font: font, .foregroundColor: colored && kind == .percent ? severity(used) : label])
+                                         withAttributes: [.font: font, .foregroundColor: colored && kind.isPercentage ? severity(used) : label])
                     x += pctW[i]
                 }
                 if i < entries.count - 1 { x += between }

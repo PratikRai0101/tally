@@ -4,8 +4,25 @@ import SwiftUI
 
 enum MenuBarStyle: String, CaseIterable, Identifiable { case columns = "Columns", bars = "Bars"; var id: String { rawValue } }
 enum PercentMode: String, CaseIterable, Identifiable { case never = "Never", high = "High usage", always = "Always"; var id: String { rawValue } }
+enum QuotaDisplay: String {
+    case used, remaining = "left"
+
+    func percent(used: Double) -> Double {
+        let clamped = min(100, max(0, used))
+        return self == .remaining ? 100 - clamped : clamped
+    }
+
+    func label(used: Double) -> String { "\(Int(percent(used: used.rounded())))%" }
+
+    func summary(used: Double) -> String { "\(label(used: used)) \(rawValue)" }
+}
 /// What the label next to each menu bar meter shows.
-enum LabelKind: String, CaseIterable, Identifiable { case off = "Off", percent = "% used", cost = "Cost", tokens = "Tokens"; var id: String { rawValue } }
+enum LabelKind: String, CaseIterable, Identifiable {
+    case off = "Off", percent = "% used", remaining = "% left", cost = "Cost", tokens = "Tokens"
+    var id: String { rawValue }
+    var isPercentage: Bool { self == .percent || self == .remaining }
+    var quotaDisplay: QuotaDisplay { self == .remaining ? .remaining : .used }
+}
 /// Time range for cost / token labels.
 enum LabelPeriod: String, CaseIterable, Identifiable {
     case today = "Today", week = "7d", month = "30d"

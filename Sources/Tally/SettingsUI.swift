@@ -363,7 +363,7 @@ private struct MenuBarPane: View {
             Card {
                 SettingRow(title: "Label shows") { Segmented(options: LabelKind.allCases, selection: $prefs.labelKind) { $0.rawValue } }
                 if prefs.labelKind != .off {
-                    if prefs.labelKind != .percent {
+                    if !prefs.labelKind.isPercentage {
                         SettingRow(title: "Over") { Segmented(options: LabelPeriod.allCases, selection: $prefs.labelPeriod) { $0.rawValue } }
                     }
                     SettingRow(title: "Show labels", detail: "High usage shows a label only once that limit passes 70%.") {
