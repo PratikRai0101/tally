@@ -4,8 +4,11 @@ import SwiftUI
 
 enum MenuBarStyle: String, CaseIterable, Identifiable { case columns = "Columns", bars = "Bars"; var id: String { rawValue } }
 enum PercentMode: String, CaseIterable, Identifiable { case never = "Never", high = "High usage", always = "Always"; var id: String { rawValue } }
-enum QuotaDisplay: String {
+/// Whether limits read as how much is used or how much is left (menu bar meters, labels, tooltips and the panel).
+enum QuotaDisplay: String, CaseIterable, Identifiable {
     case used, remaining = "left"
+    var id: String { rawValue }
+    var title: String { self == .used ? "Used" : "Left" }
 
     func percent(used: Double) -> Double {
         let clamped = min(100, max(0, used))
@@ -18,10 +21,11 @@ enum QuotaDisplay: String {
 }
 /// What the label next to each menu bar meter shows.
 enum LabelKind: String, CaseIterable, Identifiable {
-    case off = "Off", percent = "% used", remaining = "% left", cost = "Cost", tokens = "Tokens"
+    case off = "Off", percent = "% used", cost = "Cost", tokens = "Tokens"
     var id: String { rawValue }
-    var isPercentage: Bool { self == .percent || self == .remaining }
-    var quotaDisplay: QuotaDisplay { self == .remaining ? .remaining : .used }
+    /// Shown in Settings; "%" follows Show limits as (used or left). The raw value stays "% used" for saved prefs.
+    var title: String { self == .percent ? "%" : rawValue }
+    var isPercentage: Bool { self == .percent }
 }
 /// Time range for cost / token labels.
 enum LabelPeriod: String, CaseIterable, Identifiable {
@@ -50,6 +54,7 @@ final class Prefs: ObservableObject {
     @Published var meterSource: MeterSource { didSet { d.set(meterSource.rawValue, forKey: "meterSource"); changed() } }
     @Published var percentMode: PercentMode { didSet { d.set(percentMode.rawValue, forKey: "percentMode"); changed() } }
     @Published var labelKind: LabelKind { didSet { d.set(labelKind.rawValue, forKey: "labelKind"); changed() } }
+    @Published var limitDisplay: QuotaDisplay { didSet { d.set(limitDisplay.rawValue, forKey: "limitDisplay"); changed() } }
     @Published var labelPeriod: LabelPeriod { didSet { d.set(labelPeriod.rawValue, forKey: "labelPeriod"); changed() } }
     @Published var spendMode: SpendMode { didSet { d.set(spendMode.rawValue, forKey: "spendMode"); changed() } }
     /// Whether the menu bar total is dollars or tokens.
@@ -80,7 +85,10 @@ final class Prefs: ObservableObject {
         menuStyle = MenuBarStyle(rawValue: d.string(forKey: "menuStyle") ?? "") ?? .columns
         meterSource = MeterSource(rawValue: d.string(forKey: "meterSource") ?? "") ?? .tightest
         percentMode = PercentMode(rawValue: d.string(forKey: "percentMode") ?? "") ?? .high
-        labelKind = LabelKind(rawValue: d.string(forKey: "labelKind") ?? "") ?? .percent
+        // v1.10.1 had "% left" as a label kind; it's now Show limits as → Left.
+        let savedLabel = d.string(forKey: "labelKind") ?? ""
+        labelKind = savedLabel == "% left" ? .percent : LabelKind(rawValue: savedLabel) ?? .percent
+        limitDisplay = savedLabel == "% left" ? .remaining : QuotaDisplay(rawValue: d.string(forKey: "limitDisplay") ?? "") ?? .used
         labelPeriod = LabelPeriod(rawValue: d.string(forKey: "labelPeriod") ?? "") ?? .today
         totalMetric = Metric(rawValue: d.string(forKey: "totalMetric") ?? "") ?? .cost
         spendMode = SpendMode(rawValue: d.string(forKey: "spendMode") ?? "") ?? ((d.object(forKey: "showSpend") as? Bool) == false ? .off : .today)

@@ -329,7 +329,7 @@ struct ServiceCard: View {
                 ForEach(lim.windows) { w in
                     LimitRow(window: w, color: prefs.colorBars ? Theme.severity(w.usedPercent) : service.color,
                              percentColor: prefs.colorBars ? Theme.severity(w.usedPercent) : Theme.dim,
-                             forecast: store.forecast(service, w), quotaDisplay: prefs.labelKind.quotaDisplay)
+                             forecast: store.forecast(service, w), quotaDisplay: prefs.limitDisplay)
                         .opacity(Freshness(lim)?.stale == true ? 0.55 : 1)
                 }
                 valueRow(plan: lim.plan)
@@ -380,7 +380,7 @@ struct LimitRow: View {
     var quotaDisplay: QuotaDisplay = .used
 
     var body: some View {
-        let percentText = quotaDisplay.summary(used: window.usedPercent)
+        let percentText = quotaDisplay == .remaining ? quotaDisplay.summary(used: window.usedPercent) : "\(Int(window.usedPercent.rounded()))%"
         let meterUsed = quotaDisplay == .remaining ? quotaDisplay.percent(used: window.usedPercent) / 100 : window.usedPercent / 100
         let meterPace = quotaDisplay == .remaining ? window.pace.map { 1 - $0 } : window.pace
         VStack(spacing: 6) {

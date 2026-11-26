@@ -115,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
         button.image = MenuBarRenderer.statusImage(store: store, prefs: prefs)
-        let display = prefs.labelKind.quotaDisplay
+        let display = prefs.limitDisplay
         button.toolTip = store.visibleServices(prefs).compactMap { s -> String? in
             guard let w = store.limits[s]?.binding else { return nil }
             let pct = display == .remaining ? display.summary(used: w.usedPercent) : "\(Int(w.usedPercent))% used"
@@ -137,11 +137,11 @@ enum MenuBarRenderer {
                          cost: t?.cost ?? 0, tokens: t?.tokens ?? 0, live: store.live[s] != nil)
         }
         let spend: String? = store.lastUpdated == nil ? "…" : store.total(prefs.spendMode, prefs.totalMetric)
-        return image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode, label: prefs.labelKind,
+        return image(entries: entries, style: prefs.menuStyle, percents: prefs.percentMode, label: prefs.labelKind, display: prefs.limitDisplay,
                      colored: prefs.colorBars, trailing: spend, logos: prefs.showLogos)
     }
 
-    static func image(entries: [Entry], style: MenuBarStyle, percents: PercentMode, label kind: LabelKind = .percent,
+    static func image(entries: [Entry], style: MenuBarStyle, percents: PercentMode, label kind: LabelKind = .percent, display: QuotaDisplay = .used,
                       colored: Bool, trailing: String?,
                       logos: Bool = true) -> NSImage {
         let h: CGFloat = 18
@@ -150,7 +150,6 @@ enum MenuBarRenderer {
         let iconW: CGFloat = logos ? 14 : 0
         let meterW: CGFloat = style == .columns ? 6 : 20
         let gap: CGFloat = 3, between: CGFloat = 9
-        let display = kind.quotaDisplay
 
         /// The label after a meter: % used, % left, cost or tokens; "High usage" shows it only once the limit passes 70%.
         func labelText(_ e: Entry) -> String? {
@@ -161,7 +160,7 @@ enum MenuBarRenderer {
             }
             switch kind {
             case .off: return nil
-            case .percent, .remaining: return e.used.map { display.label(used: $0 * 100) }
+            case .percent: return e.used.map { display.label(used: $0 * 100) }
             case .cost: return Fmt.moneyShort(e.cost)
             case .tokens: return Fmt.tokens(e.tokens)
             }

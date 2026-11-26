@@ -264,6 +264,9 @@ private struct GeneralPane: View {
 
             SectionTitle("Behaviour")
             Card {
+                SettingRow(title: "Show limits as", detail: "How much of each limit is used, or how much is left. Applies to the menu bar and the panel.") {
+                    Segmented(options: QuotaDisplay.allCases, selection: $prefs.limitDisplay) { $0.title }
+                }
                 SettingRow(title: "Color bars by usage", detail: "Green, then amber past 70%, red past 90%. Off uses each plan's own color.") {
                     Toggle("", isOn: $prefs.colorBars).toggleStyle(PillToggle())
                 }
@@ -361,7 +364,7 @@ private struct MenuBarPane: View {
 
             SectionTitle("Labels")
             Card {
-                SettingRow(title: "Label shows") { Segmented(options: LabelKind.allCases, selection: $prefs.labelKind) { $0.rawValue } }
+                SettingRow(title: "Label shows") { Segmented(options: LabelKind.allCases, selection: $prefs.labelKind) { $0.title } }
                 if prefs.labelKind != .off {
                     if !prefs.labelKind.isPercentage {
                         SettingRow(title: "Over") { Segmented(options: LabelPeriod.allCases, selection: $prefs.labelPeriod) { $0.rawValue } }
