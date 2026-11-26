@@ -329,7 +329,7 @@ struct ServiceCard: View {
                 ForEach(lim.windows) { w in
                     LimitRow(window: w, color: prefs.colorBars ? Theme.severity(w.usedPercent) : service.color,
                              percentColor: prefs.colorBars ? Theme.severity(w.usedPercent) : Theme.dim,
-                             forecast: store.forecast(service, w))
+                             forecast: store.forecast(service, w), quotaDisplay: prefs.labelKind.quotaDisplay)
                         .opacity(Freshness(lim)?.stale == true ? 0.55 : 1)
                 }
                 valueRow(plan: lim.plan)
@@ -377,8 +377,12 @@ struct LimitRow: View {
     let color: Color
     let percentColor: Color
     var forecast: Forecast? = nil
+    var quotaDisplay: QuotaDisplay = .used
 
     var body: some View {
+        let percentText = quotaDisplay.summary(used: window.usedPercent)
+        let meterUsed = quotaDisplay == .remaining ? quotaDisplay.percent(used: window.usedPercent) / 100 : window.usedPercent / 100
+        let meterPace = quotaDisplay == .remaining ? window.pace.map { 1 - $0 } : window.pace
         VStack(spacing: 6) {
             HStack(spacing: 8) {
                 Text(window.title).font(.system(size: 12.5))
@@ -392,12 +396,12 @@ struct LimitRow: View {
                     Text(Fmt.countdown(to: window.resetsAt))
                 }
                 .font(.system(size: 11)).foregroundStyle(Theme.dim)
-                Text("\(Int(window.usedPercent.rounded()))%")
+                Text(percentText)
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(percentColor)
                     .frame(minWidth: 34, alignment: .trailing)
             }
-            DitherMeter(color: color, used: window.usedPercent / 100, pace: window.pace)
+            DitherMeter(color: color, used: meterUsed, pace: meterPace)
                 .frame(height: 9)
             if let f = forecast {
                 HStack(spacing: 4) {
@@ -411,9 +415,15 @@ struct LimitRow: View {
                         Text("Too early in this window to forecast").foregroundStyle(Theme.faint)
                     } else if let end = f.atReset {
                         if end >= 90 {
-                            Text("Cutting it close: about \(min(99, Int(end.rounded())))% used by reset").foregroundStyle(Theme.warn)
+                            let pct = quotaDisplay == .remaining
+                                ? "\(max(1, 100 - min(99, Int(end.rounded()))))% left"
+                                : "\(min(99, Int(end.rounded())))% used"
+                            Text("Cutting it close: about \(pct) by reset").foregroundStyle(Theme.warn)
                         } else {
-                            Text("On track: about \(max(1, Int(end.rounded())))% used by reset").foregroundStyle(Theme.faint)
+                            let pct = quotaDisplay == .remaining
+                                ? "\(min(99, 100 - max(1, Int(end.rounded()))))% left"
+                                : "\(max(1, Int(end.rounded())))% used"
+                            Text("On track: about \(pct) by reset").foregroundStyle(Theme.faint)
                         }
                     } else if f.runsOutIn != nil {
                         Text("Lasts until reset at this pace").foregroundStyle(Theme.faint)
